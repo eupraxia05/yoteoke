@@ -1,0 +1,1 @@
+A karaoke lyric editor using Rust and Bevy Engine.
