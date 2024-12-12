@@ -19,11 +19,20 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
 }
 
 fn ui(mut contexts: EguiContexts, mut editor_state: ResMut<EditorState>) {
+    egui::TopBottomPanel::top("menu").show(contexts.ctx_mut(), |ui| {
+        egui::menu::bar(ui, |ui| {
+            ui.menu_button("File", |ui| {
+                ui.button("Save");
+            });
+        });
+    });
     egui::CentralPanel::default().show(contexts.ctx_mut(), |ui| {
         egui::SidePanel::new(egui::panel::Side::Left, "main_left_panel")
             .default_width(512.).show_inside(ui, |ui| 
         {
-            ui.add(egui::TextEdit::multiline(&mut editor_state.text).code_editor())
+            egui::ScrollArea::both().show(ui, |ui| {
+                ui.add(egui::TextEdit::multiline(&mut editor_state.text).code_editor())
+            });
         });
     });
 }
