@@ -6,3 +6,6 @@ edition = "2021"
 [dependencies]
 bevy = "0.15"
 bevy_egui = "0.31"
+egui_file = "0.19"
+serde = "1.0.216"
+serde_json = "1.0.133"
