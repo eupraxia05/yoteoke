@@ -5572,6 +5572,7 @@ dependencies = [
  "bevy_egui",
  "egui_file",
  "kira",
+ "regex",
  "serde",
  "serde_json",
 ]

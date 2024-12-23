@@ -27,15 +27,20 @@ use kira::{
 mod lyrics;
 use crate::lyrics::ParsedLyrics;
 
+mod ui;
+
 fn main() {
-  App::new()
-    .add_plugins(DefaultPlugins)
+  let mut app = App::new();
+    
+  app.add_plugins(DefaultPlugins)
     .add_plugins(EguiPlugin)
     .insert_resource(EditorState::default())
     .add_systems(Startup, setup)
-    .add_systems(Update, update)
-    .add_systems(Update, ui)
-    .run();
+    .add_systems(Update, update);
+
+  ui::build(&mut app);
+
+  app.run();
 }
 
 fn setup(mut commands: Commands, asset_server: Res<AssetServer>, 
@@ -54,163 +59,6 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>,
 
 fn update(mut editor_state: ResMut<EditorState>, asset_server: Res<AssetServer>) {
   editor_state.update(asset_server.as_ref());
-}
-
-fn ui(mut contexts: EguiContexts, mut editor_state: ResMut<EditorState>) {
-  egui::TopBottomPanel::top("menu").show(contexts.ctx_mut(), |ui| {
-      egui::menu::bar(ui, |ui| {
-          ui.menu_button("File", |ui| {
-              if ui.button("New...").clicked() {
-                editor_state.new();
-              }
-              if ui.button("Open...").clicked() {
-                println!("open button clicked");
-                let mut dialog = FileDialog::open_file(None);
-                dialog.open();
-                editor_state.open_dialog = Some(dialog);
-              }
-              if ui.button("Save").clicked() {
-                editor_state.save();
-              }
-              if ui.button("Save As...").clicked() {
-                let mut dialog = FileDialog::save_file(None);
-                dialog.open();
-                editor_state.file_dialog = Some(dialog)
-              }
-          });
-      });
-  });
-
-  egui::CentralPanel::default().show(contexts.ctx_mut(), |ui| {
-    if editor_state.project_data.is_some() {
-      egui::SidePanel::new(egui::panel::Side::Left, "main_left_panel")
-        .default_width(512.)
-        .show_inside(ui, |ui| 
-        {
-          let mut text_edit_changed = false;
-          if let Some(project_data) = &mut editor_state.project_data {
-            let title_str = format!("{} - {}", project_data.artist, project_data.title);
-            ui.label(title_str);
-            ui.separator();
-            egui::ScrollArea::both().show(ui, |ui| {
-              let text_edit_response = ui.add_sized(ui.available_size(), 
-                egui::TextEdit::multiline(&mut project_data.lyrics).code_editor());
-              if text_edit_response.changed() {
-                info!("text edit changed");
-                text_edit_changed = true;
-              }
-            });
-          }
-          if text_edit_changed {
-            info!("lyrics marked dirty");
-            editor_state.lyrics_dirty = true;
-          }
-        }
-      );
-      egui::CentralPanel::default().show_inside(ui, |ui| {
-        egui::TopBottomPanel::new(egui::panel::TopBottomSide::Bottom, "timeline_panel")
-          .exact_height(256.)
-          .show_inside(ui, |ui|
-          {
-            egui::TopBottomPanel::new(egui::panel::TopBottomSide::Top, "timeline_header").exact_height(32.).show_inside(ui, |ui| {
-              let curr_time = Duration::from_secs_f64(editor_state.music_handle.as_mut().unwrap().position());
-              let total_time = editor_state.duration.unwrap();
-              egui::SidePanel::new(egui::panel::Side::Left, "play_buttons").show_inside(ui, |ui| {
-                ui.horizontal(|ui| {
-                  if ui.button("|<-").clicked() {
-                    editor_state.music_handle.as_mut().unwrap().seek_to(0.);
-                  }
-                  if ui.button("<-").clicked() {
-                    editor_state.music_handle.as_mut().unwrap().seek_to((curr_time - Duration::from_secs_f64(5.)).as_secs_f64().max(0.));
-                  }
-                  if editor_state.music_handle.as_ref().unwrap().state() == PlaybackState::Paused {
-                    if ui.button(">").clicked() {
-                      editor_state.music_handle.as_mut().unwrap().resume(Tween::default());
-                    }
-                  } else {
-                    if ui.button("||").clicked() {
-                      editor_state.music_handle.as_mut().unwrap().pause(Tween::default());
-                    }
-                  }
-                  if ui.button("->").clicked() {
-                    editor_state.music_handle.as_mut().unwrap().seek_to((curr_time + Duration::from_secs_f64(5.)).min(total_time).as_secs_f64());
-                  }
-                  if ui.button("->|").clicked() {
-                    if editor_state.music_handle.as_mut().unwrap().state() == PlaybackState::Playing {
-                      editor_state.music_handle.as_mut().unwrap().pause(Tween::default());
-                    }
-                    editor_state.music_handle.as_mut().unwrap().seek_to(total_time.as_secs_f64());
-                  }
-                });
-              });
-              let curr_time_str = format!("{:0>2}:{:0>2}.{:0>3}", curr_time.as_secs() / 60, curr_time.as_secs() % 60, curr_time.subsec_millis());
-              let total_time_str = format!("{:0>2}:{:0>2}.{:0>3}", total_time.as_secs() / 60, total_time.as_secs() % 60, total_time.subsec_millis());
-              egui::SidePanel::new(egui::panel::Side::Right, "timecode").show_inside(ui, |ui| {
-                ui.label(format!("{} / {}", curr_time_str, total_time_str));
-              });
-              egui::CentralPanel::default().show_inside(ui, |ui| {
-                ui.style_mut().spacing.slider_width = ui.available_width();
-                let mut mut_curr_time = curr_time.as_secs_f64();
-                let slider_response = ui.add(egui::Slider::new(&mut mut_curr_time, RangeInclusive::new(0., total_time.as_secs_f64())).show_value(false));
-                if slider_response.changed() {
-                  editor_state.music_handle.as_mut().unwrap().seek_to(mut_curr_time);
-                }
-              });
-            });
-            egui::CentralPanel::default().show_inside(ui, |ui| {
-              egui::ScrollArea::both().auto_shrink([false, false]).show(ui, |ui| {
-                if let Some(parsed_lyrics) = &mut editor_state.parsed_lyrics {
-                  ui.horizontal(|ui| {
-                    for block in &parsed_lyrics.blocks {
-                      egui::Frame::canvas(ui.style()).show(ui, |ui| {
-                        ui.vertical(|ui| {
-                          for line in &block.lines {
-                            let label = egui::Label::new(line.clone())
-                              .wrap_mode(egui::TextWrapMode::Extend)
-                              .halign(egui::Align::Center);
-                            ui.add(label);
-                          }
-                        });
-                      });
-                    }
-                  });
-                }
-              });
-            });
-          });
-      });
-    }
-  });
-
-  let mut file_to_save = None;
-
-  if let Some(file_dialog) = &mut editor_state.file_dialog {
-    if file_dialog.show(contexts.ctx_mut()).selected() {
-      if let Some(file) = file_dialog.path() {
-        file_to_save = Some(PathBuf::from(file));
-      }
-    }
-  }
-
-  if let Some(file_to_save) = file_to_save {
-    editor_state.set_project_file_path(file_to_save);
-    editor_state.save();
-  }
-
-  if let Some(new_project_dialog) = &mut editor_state.new_file_dialog {
-    new_project_dialog.show(contexts.ctx_mut());
-  }
-
-  let mut file_to_open = None;
-  if let Some(open_file_dialog) = &mut editor_state.open_dialog {
-    if open_file_dialog.show(contexts.ctx_mut()).selected() {
-      file_to_open = Some(PathBuf::from(open_file_dialog.path().unwrap()));
-    }
-  }
-
-  if let Some(file_to_open) = file_to_open {
-    editor_state.open(&file_to_open);
-  }
 }
 
 #[derive(Resource, Default)]
@@ -258,6 +106,7 @@ impl EditorState {
         if let Ok(file) = File::open(path) {
             if let Ok(data) = serde_json::from_reader::<_, ProjectData>(file) {
                 self.project_data = Some(data);
+                self.lyrics_dirty = true;
             } else {
                 println!("couldn't deserialize file");
             }
