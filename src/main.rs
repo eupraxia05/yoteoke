@@ -2,6 +2,7 @@ use bevy::prelude::*;
 use bevy_egui::egui::Style;
 use bevy_egui::{egui, EguiContexts, EguiPlugin};
 use egui_file::FileDialog;
+use export::ExportState;
 use kira::sound::static_sound::StaticSoundHandle;
 use kira::sound::streaming::{StreamingSoundData, StreamingSoundHandle};
 use kira::sound::{FromFileError, PlaybackState, SoundData};
@@ -24,10 +25,24 @@ use kira::{
   }, 
 };
 
+use bevy::render::view::RenderLayers;
+use bevy::text::TextLayoutInfo;
+use std::collections::HashMap;
+
 mod lyrics;
 use crate::lyrics::ParsedLyrics;
 
 mod ui;
+use crate::ui::NewProjectDialog;
+use crate::ui::ProjectSettingsDialog;
+
+mod sub_viewport;
+use crate::sub_viewport::SubViewport;
+
+mod export;
+
+#[derive(Component)]
+struct PreviewText;
 
 fn main() {
   let mut app = App::new();
@@ -36,9 +51,13 @@ fn main() {
     .add_plugins(EguiPlugin)
     .insert_resource(EditorState::default())
     .add_systems(Startup, setup)
-    .add_systems(Update, update);
+    .add_systems(Update, update)
+    .add_systems(Update, center_text_hack)
+    .add_systems(Update, update_preview);
 
   ui::build(&mut app);
+  sub_viewport::build(&mut app);
+  export::build(&mut app);
 
   app.run();
 }
@@ -52,28 +71,76 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>,
       editor_state.audio_manager = Some(m);
     },
     Err(e) => {
-      error!("Error initializing Kira audio manager: {:?}", e);
+      error!("Error initializing Kira audio manager: {:?}", e); 
+    }
+  }
+
+  commands.spawn(SubViewport::new(RenderLayers::layer(1)));
+  commands.spawn(
+    (
+      Text2d("".into()), 
+      TextFont {
+        font_size: 64.0,
+        ..Default::default()
+      },
+      TextLayout::new_with_justify(JustifyText::Right),
+      RenderLayers::layer(1), 
+      PreviewText
+    )
+  );
+}
+
+fn update_preview(mut editor_state: ResMut<EditorState>,
+  mut preview_text_query: Query<(&PreviewText, &mut Text2d)>,
+  export_state: Res<ExportState>)
+{
+  let song_position = if export_state.is_exporting() {
+    Duration::from_secs_f64(export_state.frame_idx() as f64 / 30.)
+  } else {
+    editor_state.playhead_position()
+  };
+
+  if let Some(lyrics) = editor_state.parsed_lyrics.as_ref() {
+    if let Some(music_handle) = editor_state.music_handle.as_ref() {
+      if let Some(block) = lyrics.get_block_at_time(&song_position, &Duration::from_secs(3)) {
+        let mut text = "".to_string();
+        for line in &block.lines {
+          text += &line.line.clone();
+          text += "\n"
+        }
+        preview_text_query.single_mut().1.0 = text.clone();
+      } else {
+        preview_text_query.single_mut().1.0 = "".to_string();
+      }
     }
   }
 }
 
-fn update(mut editor_state: ResMut<EditorState>, asset_server: Res<AssetServer>) {
+fn update(mut editor_state: ResMut<EditorState>, asset_server: Res<AssetServer>,
+  mut preview_text_query: Query<(&PreviewText, &mut Text2d)>,
+  mut camera_tex_query: Query<&mut SubViewport>) 
+{
   editor_state.update(asset_server.as_ref());
+
+  if let Some(project_data) = &editor_state.project_data {
+    camera_tex_query.single_mut().clear_color = ClearColorConfig::Custom(project_data.background_color.unwrap_or_default());
+  }
 }
 
 #[derive(Resource, Default)]
 struct EditorState {
-    project_file_path: PathBuf,
-    text: String,
-    file_dialog: Option<FileDialog>,
-    project_data: Option<ProjectData>,
-    new_file_dialog: Option<NewProjectDialog>,
-    open_dialog: Option<FileDialog>,
-    music_handle: Option<StreamingSoundHandle<FromFileError>>,
-    audio_manager: Option<AudioManager>,
-    duration: Option<Duration>,
-    parsed_lyrics: Option<ParsedLyrics>,
-    lyrics_dirty: bool,
+  project_file_path: PathBuf,
+  text: String,
+  file_dialog: Option<FileDialog>,
+  project_data: Option<ProjectData>,
+  new_file_dialog: Option<NewProjectDialog>,
+  open_dialog: Option<FileDialog>,
+  music_handle: Option<StreamingSoundHandle<FromFileError>>,
+  audio_manager: Option<AudioManager>,
+  duration: Option<Duration>,
+  parsed_lyrics: Option<ParsedLyrics>,
+  lyrics_dirty: bool,
+  project_settings_dialog: ProjectSettingsDialog,
 }
 
 impl EditorState {
@@ -113,6 +180,14 @@ impl EditorState {
         } else {
             println!("couldn't open file {:?}", path);
         }
+    }
+
+    fn playhead_position(&self) -> Duration {
+      if let Some(music_handle) = &self.music_handle {
+        return Duration::from_secs_f64(music_handle.position());
+      } else {
+        return Duration::default();
+      }
     }
 
     fn update(&mut self, asset_server: &AssetServer) {
@@ -177,124 +252,57 @@ impl EditorState {
     }
 }
 
-#[derive(Serialize, Deserialize, Default)]
+#[derive(Serialize, Deserialize, Default, Clone)]
 struct ProjectData {
     lyrics: String,
     artist: String,
     title: String,
-    song_file: Option<PathBuf>
-}
-
-struct NewProjectDialog {
-    is_open: bool,
-    is_submitted: bool,
-    artist: String,
-    title: String,
-    save_file_dialog: Option<FileDialog>,
-    song_file_dialog: Option<FileDialog>,
     song_file: Option<PathBuf>,
-    save_file: Option<PathBuf>,
+    background_color: Option<Color>,
 }
 
-impl Default for NewProjectDialog {
-    fn default() -> Self {
-        Self {
-            is_open: false,
-            is_submitted: false,
-            artist: "glass beach".into(),
-            title: "cul-de-sac".into(),
-            song_file_dialog: None,
-            save_file_dialog: None,
-            song_file: None,
-            save_file: None,
+pub(crate) fn center_text_hack(
+    mut query: Query<(&TextLayout, &mut TextLayoutInfo), (Changed<TextLayoutInfo>, With<Text2d>)>,
+) {
+    for (_, mut text_info) in query
+        .iter_mut()
+        .filter(|(layout, _)| layout.justify == JustifyText::Center)
+    {
+        // find max x position for each text section
+        let mut text_section_max_pos: HashMap<usize, f32> = HashMap::new();
+        for positioned_glyph in text_info.glyphs.iter() {
+            text_section_max_pos
+                .entry(positioned_glyph.span_index)
+                .and_modify(|value| {
+                    if *value < positioned_glyph.position.x {
+                        *value = positioned_glyph.position.x;
+                    }
+                })
+                .or_insert(positioned_glyph.position.x);
+        }
+
+        // find max x for whole text
+        let max_pos = text_section_max_pos
+            .values()
+            .max_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Less));
+
+        if let Some(max_pos) = max_pos {
+            // calculate correction for x for each section if needed
+            let to_correct: HashMap<usize, f32> =
+                HashMap::from_iter(text_section_max_pos.iter().filter_map(|(k, v)| {
+                    if v < max_pos {
+                        Some((*k, (max_pos - v) / 2.))
+                    } else {
+                        None
+                    }
+                }));
+
+            // apply x correction
+            for positioned_glyph in text_info.glyphs.iter_mut() {
+                if let Some(x_fix) = to_correct.get(&positioned_glyph.span_index) {
+                    positioned_glyph.position.x += x_fix;
+                }
+            }
         }
     }
-}
-
-impl NewProjectDialog {
-  fn open(&mut self) {
-      self.is_open = true;
-  }
-
-  fn show(&mut self, ctx: &egui::Context) {
-    if self.is_open {
-      egui::Window::new("New Project").show(ctx, |ui| {
-        let mut last_visited_path: Option<PathBuf> = None;
-        ui.data_mut(|map| {
-          last_visited_path = map.get_persisted("last_visited_path".into());
-        });
-
-        ui.horizontal(|ui| {
-          ui.label("Artist");
-          ui.text_edit_singleline(&mut self.artist)
-        });
-
-        ui.horizontal(|ui| {
-          ui.label("Title");
-          ui.text_edit_singleline(&mut self.title)
-        });
-
-        ui.horizontal(|ui| {
-          ui.label("Song File");
-          if let Some(song_file_path) = &self.song_file {
-            ui.label(song_file_path.as_os_str().to_string_lossy());
-          } else {
-            ui.label("No file selected");
-          }
-          if ui.button("Browse...").clicked() {
-            let mut song_file_dialog = FileDialog::open_file(None);
-            song_file_dialog.open();
-            self.song_file_dialog = Some(song_file_dialog);
-          }
-        });
-
-        ui.horizontal(|ui| {
-            ui.label("Project File");
-            if let Some(project_file_path) = &self.save_file {
-              ui.label(project_file_path.as_os_str().to_string_lossy());
-            } else {
-              ui.label("No file selected");
-            }
-            if ui.button("Browse...").clicked() {
-              let mut project_file_dialog = FileDialog::save_file(None);
-              project_file_dialog.open();
-              self.save_file_dialog = Some(project_file_dialog);
-            }
-        });
-
-        let can_create = self.save_file != None && self.song_file != None;
-
-        if ui.add_enabled(can_create, egui::Button::new("Create")).clicked() {
-          self.is_open = false;
-          self.is_submitted = true;
-        }
-      });
-
-      if let Some(song_file_dialog) = &mut self.song_file_dialog {
-        song_file_dialog.show(ctx);
-        if song_file_dialog.selected() {
-          if let Some(path) = song_file_dialog.path() {
-            self.song_file = Some(PathBuf::from(path));
-            ctx.data_mut(|map| {
-              *map.get_persisted_mut_or_default("last_visited_path".into()) 
-                = Some(PathBuf::from(song_file_dialog.directory()));
-            });
-          }
-        }
-      }
-
-      if let Some(save_file_dialog) = &mut self.save_file_dialog {
-        save_file_dialog.show(ctx);
-        if save_file_dialog.selected() {
-          if let Some(path) = save_file_dialog.path() {
-            self.save_file = Some(PathBuf::from(path));
-            ctx.data_mut(|map| {
-              *map.get_persisted_mut_or_default("last_visited_path".into()) 
-                = Some(PathBuf::from(save_file_dialog.directory()));
-            });
-          }
-        }
-      }
-    }
-  }
 }
