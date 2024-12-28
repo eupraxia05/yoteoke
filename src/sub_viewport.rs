@@ -123,5 +123,9 @@ impl SubViewport {
       ));
     }
   }
+
+  pub fn image_handle(&self) -> Handle<Image> {
+    self.image.as_ref().unwrap().clone_weak()
+  }
 }
 

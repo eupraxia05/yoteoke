@@ -13,3 +13,5 @@ kira = { version = "0.9.6", features = ["symphonia"] }
 regex = "1.11.1"
 ffmpeg-cli = "0.1.0"
 bevy-tokio-tasks = "0.15.0"
+directories = "5.0"
+bevy_image_export = "0.12.0"

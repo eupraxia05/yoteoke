@@ -1,6 +1,8 @@
 use bevy::prelude::*;
+use bevy::render::RenderPlugin;
 use bevy_egui::egui::Style;
 use bevy_egui::{egui, EguiContexts, EguiPlugin};
+use bevy_image_export::ImageExportPlugin;
 use egui_file::FileDialog;
 use export::ExportState;
 use kira::sound::static_sound::StaticSoundHandle;
@@ -41,25 +43,40 @@ use crate::sub_viewport::SubViewport;
 
 mod export;
 
+use bevy_tokio_tasks::TokioTasksPlugin;
+
 #[derive(Component)]
 struct PreviewText;
 
 fn main() {
   let mut app = App::new();
+
+  let export_plugin = ImageExportPlugin::default();
+  let export_threads = export_plugin.threads.clone();
     
-  app.add_plugins(DefaultPlugins)
+  app
+    .add_plugins(DefaultPlugins
+      .set(RenderPlugin {
+        synchronous_pipeline_compilation: true,
+        ..default()
+      })
+    )
+    .add_plugins(export_plugin)
     .add_plugins(EguiPlugin)
     .insert_resource(EditorState::default())
     .add_systems(Startup, setup)
     .add_systems(Update, update)
     .add_systems(Update, center_text_hack)
-    .add_systems(Update, update_preview);
+    .add_systems(Update, update_preview)
+    .add_plugins(TokioTasksPlugin::default());
 
   ui::build(&mut app);
   sub_viewport::build(&mut app);
   export::build(&mut app);
 
   app.run();
+
+  export_threads.finish();
 }
 
 fn setup(mut commands: Commands, asset_server: Res<AssetServer>, 
@@ -95,7 +112,7 @@ fn update_preview(mut editor_state: ResMut<EditorState>,
   export_state: Res<ExportState>)
 {
   let song_position = if export_state.is_exporting() {
-    Duration::from_secs_f64(export_state.frame_idx() as f64 / 30.)
+    Duration::from_secs_f64(export_state.frame_idx() as f64 / 1.)
   } else {
     editor_state.playhead_position()
   };
