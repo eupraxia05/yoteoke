@@ -115,9 +115,15 @@ fn menu_ui(ui: &mut egui::Ui, mut editor_state: Mut<EditorState>,
 
 fn lyrics_edit_ui(ui: &mut egui::Ui, mut editor_state: Mut<EditorState>) {
   let mut text_edit_changed = false;
+  let mut cursor_pos = None;
+  let curr_time = Duration::from_secs_f64(editor_state.music_handle.as_mut().unwrap().position());
+  let mut insert_desired = false;
   if let Some(project_data) = &mut editor_state.project_data {
     let title_str = format!("{} - {}", project_data.artist, project_data.title);
     ui.label(title_str);
+    if ui.button("Insert").clicked() {
+      insert_desired = true;
+    }
     ui.separator();
     egui::ScrollArea::both().show(ui, |ui| {
       let text_edit_response = ui.add_sized(ui.available_size(), 
@@ -126,7 +132,22 @@ fn lyrics_edit_ui(ui: &mut egui::Ui, mut editor_state: Mut<EditorState>) {
         info!("text edit changed");
         text_edit_changed = true;
       }
+      if let Some(text_edit_state) = egui::text_edit::TextEditState::load(ui.ctx(), 
+        text_edit_response.id) 
+      {
+        if let Some(char_range) = text_edit_state.cursor.char_range() {
+          cursor_pos = Some(char_range.primary);
+        }
+      }
     });
+    if insert_desired {
+      if let Some(cursor_pos) = cursor_pos {
+        let str_to_insert = format!("[{:0>2}:{:0>2}.{:0>3}]", 
+          curr_time.as_secs() / 60, curr_time.as_secs() % 60, curr_time.subsec_millis());
+        project_data.lyrics.insert_str(cursor_pos.index, &str_to_insert);
+        text_edit_changed = true
+      }
+    }
   }
   if text_edit_changed {
     info!("lyrics marked dirty");
@@ -200,16 +221,23 @@ fn timeline_blocks_ui(ui: &mut egui::Ui, mut editor_state: Mut<EditorState>,) {
     if let Some(parsed_lyrics) = &mut editor_state.parsed_lyrics {
       ui.horizontal(|ui| {
         for block in &parsed_lyrics.blocks {
-          egui::Frame::canvas(ui.style()).show(ui, |ui| {
-            ui.vertical(|ui| {
-              for line in &block.lines {
-                let label = egui::Label::new(line.line.clone())
+          if let Some(time_range) = block.get_time_range() {
+            let block_duration = if time_range.end > time_range.start {
+              time_range.end - time_range.start
+            } else {
+              warn!("non-sequential time range: {:?}", time_range);
+              Duration::default()
+            };
+            egui::Frame::canvas(ui.style()).show(ui, |ui| {
+              ui.vertical(|ui| {
+                let lyrics = block.lyrics.clone().replace("\n", " ");
+                let label = egui::Label::new(lyrics.clone())
                   .wrap_mode(egui::TextWrapMode::Extend)
-                  .halign(egui::Align::Center);
+                  .halign(egui::Align::Min);
                 ui.add(label);
-              }
+              });
             });
-          });
+          }
         }
       });
     }
@@ -398,13 +426,24 @@ impl ProjectSettingsDialog {
     self.is_open = true;
   }
 
-  pub fn show(&mut self, ctx: &egui::Context, project_data: &mut ProjectData) {
+  fn color_property(ui: &mut egui::Ui, label_text: &str, color: &mut Option<Color>) {
+    ui.horizontal(|ui| {
+      ui.label(label_text);
+      let c = color.unwrap_or_default().to_linear();
+      let mut color_temp = [c.red, c.green, c.blue];
+      ui.color_edit_button_rgb(&mut color_temp);
+      *color = Some(Color::linear_rgb(color_temp[0], color_temp[1], color_temp[2]));
+    });
+  }
+
+  pub fn show(&mut self, ctx: &egui::Context, 
+    project_data: &mut ProjectData) 
+  {
     if self.is_open {
       egui::Window::new("Project Settings").show(ctx, |ui| {
-        let c = project_data.background_color.unwrap_or_default().to_linear();
-        let mut color_temp = [c.red, c.green, c.blue];
-        ui.color_edit_button_rgb(&mut color_temp);
-        project_data.background_color = Some(Color::linear_rgb(color_temp[0], color_temp[1], color_temp[2]));
+        Self::color_property(ui, "Background color", &mut project_data.background_color);
+        Self::color_property(ui, "Text color (unsung)", &mut project_data.unsung_color);
+        Self::color_property(ui, "Text color (sung)", &mut project_data.sung_color);
       });
     }
   }

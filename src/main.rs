@@ -48,6 +48,9 @@ use bevy_tokio_tasks::TokioTasksPlugin;
 #[derive(Component)]
 struct PreviewText;
 
+#[derive(Component)]
+struct LineText;
+
 fn main() {
   let mut app = App::new();
 
@@ -67,7 +70,7 @@ fn main() {
     .add_systems(Startup, setup)
     .add_systems(Update, update)
     .add_systems(Update, center_text_hack)
-    .add_systems(Update, update_preview)
+    .add_systems(Update, (cleanup_preview, update_preview).chain())
     .add_plugins(TokioTasksPlugin::default());
 
   ui::build(&mut app);
@@ -93,48 +96,101 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>,
   }
 
   commands.spawn(SubViewport::new(RenderLayers::layer(1)));
-  commands.spawn(
-    (
-      Text2d("".into()), 
-      TextFont {
-        font_size: 64.0,
-        ..Default::default()
-      },
-      TextLayout::new_with_justify(JustifyText::Right),
-      RenderLayers::layer(1), 
-      PreviewText
-    )
-  );
+}
+
+fn cleanup_preview(world: &mut World) {
+  let line_texts = world.query_filtered::<Entity, With<LineText>>().iter(&world).collect::<Vec<_>>();
+  for entity in line_texts.iter() {
+    world.despawn(*entity);
+  }
+
+  let preview_texts = world.query_filtered::<Entity, With<PreviewText>>().iter(&world).collect::<Vec<_>>();
+  for entity in preview_texts.iter() {
+    world.despawn(*entity);
+  }
 }
 
 fn update_preview(mut editor_state: ResMut<EditorState>,
-  mut preview_text_query: Query<(&PreviewText, &mut Text2d)>,
-  export_state: Res<ExportState>)
+  export_state: Res<ExportState>,
+  mut commands: Commands,
+)
 {
   let song_position = if export_state.is_exporting() {
-    Duration::from_secs_f64(export_state.frame_idx() as f64 / 1.)
+    Duration::from_secs_f64(export_state.frame_idx() as f64 / 12.)
   } else {
     editor_state.playhead_position()
   };
 
+  let mut text: String = "".into();
+  let mut chars_sung: usize = 0;
   if let Some(lyrics) = editor_state.parsed_lyrics.as_ref() {
     if let Some(music_handle) = editor_state.music_handle.as_ref() {
       if let Some(block) = lyrics.get_block_at_time(&song_position, &Duration::from_secs(3)) {
-        let mut text = "".to_string();
-        for line in &block.lines {
-          text += &line.line.clone();
-          text += "\n"
+        text = block.lyrics.clone();
+
+        if let Some((ts1, ts2)) = block.get_timestamps_surrounding(&song_position) {
+          if ts1.position <= ts2.position && ts1.time < ts2.time {
+            let elapsed_in_syl = song_position - ts1.time;
+            let total_syl_time = ts2.time - ts1.time;
+            let chars_in_syl = ts2.position - ts1.position;
+            let amount_sung = elapsed_in_syl.as_secs_f64() / total_syl_time.as_secs_f64();
+            chars_sung = (amount_sung * chars_in_syl as f64) as usize + ts1.position;
+          } else {
+            warn!("non-sequential timestamps: {:?}, {:?}", ts1, ts2);
+            chars_sung = 0
+          }
+        } else {
+          chars_sung = 0
         }
-        preview_text_query.single_mut().1.0 = text.clone();
-      } else {
-        preview_text_query.single_mut().1.0 = "".to_string();
       }
     }
+  }
+
+  if text.len() > 2 && text.len() > chars_sung {
+    let preview_text_ent = commands.spawn(
+      (
+        Text2d::default(), 
+        TextLayout::new_with_justify(JustifyText::Right),
+        RenderLayers::layer(1), 
+        PreviewText
+      )
+    ).id();
+
+    commands
+      .spawn(
+        (
+          TextSpan::new(&text[0..chars_sung]),
+          TextFont {
+            font_size: 64.0,
+            ..Default::default()
+          }, 
+          TextColor(
+            editor_state.project_data.as_ref().unwrap().sung_color.unwrap_or_default()
+          ), 
+          LineText
+        )
+      )
+      .set_parent(preview_text_ent);
+
+    commands
+      .spawn(
+        (
+          TextSpan::new(String::from(&text[chars_sung..]) + "\n"),
+          TextFont {
+            font_size: 64.0,
+            ..Default::default()
+          }, 
+          TextColor(
+            editor_state.project_data.as_ref().unwrap().unsung_color.unwrap_or_default()
+          ), 
+          LineText
+        )
+      )
+      .set_parent(preview_text_ent);
   }
 }
 
 fn update(mut editor_state: ResMut<EditorState>, asset_server: Res<AssetServer>,
-  mut preview_text_query: Query<(&PreviewText, &mut Text2d)>,
   mut camera_tex_query: Query<&mut SubViewport>) 
 {
   editor_state.update(asset_server.as_ref());
@@ -276,6 +332,9 @@ struct ProjectData {
     title: String,
     song_file: Option<PathBuf>,
     background_color: Option<Color>,
+    unsung_color: Option<Color>,
+    sung_color: Option<Color>,
+    thumbnail_file: Option<PathBuf>,
 }
 
 pub(crate) fn center_text_hack(

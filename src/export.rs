@@ -78,7 +78,7 @@ fn update_export(mut export_state: ResMut<ExportState>, mut commands: Commands,
 {
   if export_state.is_exporting {
     export_state.frame_idx += 1;
-    if export_state.frame_idx as f64 / 1. > editor_state.duration.unwrap().as_secs_f64() {
+    if export_state.frame_idx as f64 / 12. > editor_state.duration.unwrap().as_secs_f64() {
       if let Some(export_ent) = export_state.export_ent {
         commands.entity(export_ent).despawn();
         export_state.export_ent = None;
@@ -97,7 +97,7 @@ fn update_export(mut export_state: ResMut<ExportState>, mut commands: Commands,
             .option(Parameter::Single("nostdin"))
             // overwrite file if it exists
             .option(Parameter::Single("y"))
-            .option(Parameter::KeyValue("r", "1"))
+            .option(Parameter::KeyValue("r", "12"))
             .input(File::new(&input_path))
             .input(File::new(&song_path)) 
             .output(

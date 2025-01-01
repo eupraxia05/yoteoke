@@ -18,10 +18,6 @@ impl ParsedLyrics {
             let line = line.trim();
             if !line.is_empty() {
                 let (tags, line_without_tags) = Self::extract_tags(line);
-                let mut line = Line {
-                    line: line_without_tags,
-                    timestamps: Vec::new()
-                };
                 for tag in tags {
                     let timecode_regex = Regex::new(r"\[([0-9]+):([0-9]+).([0-9]+)\]").unwrap();
                     if let Some(captures) = timecode_regex.captures(&tag.tag) {
@@ -29,15 +25,16 @@ impl ParsedLyrics {
                         let seconds: u32 = captures.get(2).unwrap().as_str().parse().unwrap();
                         let millis: u32 = captures.get(3).unwrap().as_str().parse().unwrap();
                         let timestamp = Timestamp {
-                            position: tag.position,
+                            position: tag.position + curr_block.lyrics.len(),
                             time: Duration::from_secs_f32(minutes as f32 * 60. + seconds as f32 + millis as f32 / 1000.)
                         };
-                        line.timestamps.push(timestamp);
+                        curr_block.timestamps.push(timestamp);
                     }
                 }
-                curr_block.lines.push(line);
+                curr_block.lyrics.push_str(&line_without_tags);
+                curr_block.lyrics.push_str("\n");
             } else {
-                if curr_block.lines.len() > 0 {
+                if curr_block.lyrics.len() > 0 {
                     blocks.push(curr_block.clone());
                     curr_block = Block::default();
                 }
@@ -73,7 +70,7 @@ impl ParsedLyrics {
                 position: *range.start() - tag_len_so_far,
                 tag: line[range.clone()].into()
             });
-            tag_len_so_far += range.end() - range.start();
+            tag_len_so_far += range.end() - range.start() + 1;
         }
 
         (tags, stripped_line)
@@ -89,28 +86,30 @@ impl ParsedLyrics {
                 }
             }
         }
+        
         None
     }
 }
 
 #[derive(Default, Clone)]
 pub struct Block {
-    pub lines: Vec<Line>,
+    pub lyrics: String,
+    pub timestamps: Vec<Timestamp>,
 }
 
 impl Block {
-    fn get_time_range(&self) -> Option<Range<Duration>> {
+    pub fn get_time_range(&self) -> Option<Range<Duration>> {
         let mut first_timestamp = None;
         let mut last_timestamp = None;
-        for line in &self.lines {
-            for timestamp in &line.timestamps {
-                if first_timestamp.is_none() {
-                    first_timestamp = Some(timestamp);
-                } else {
-                    last_timestamp = Some(timestamp);
-                }
+
+        for timestamp in &self.timestamps {
+            if first_timestamp.is_none() {
+                first_timestamp = Some(timestamp);
+            } else {
+                last_timestamp = Some(timestamp);
             }
         }
+
         if let Some(first_timestamp) = first_timestamp {
             if let Some(last_timestamp) = last_timestamp {
                 return Some(first_timestamp.time..last_timestamp.time);
@@ -118,12 +117,47 @@ impl Block {
         }
         None
     }
-}
 
-#[derive(Clone)]
-pub struct Line {
-    pub line: String,
-    pub timestamps: Vec<Timestamp>
+    pub fn start_time(&self) -> Option<Duration> {
+        if self.timestamps.len() > 0 {
+            return Some(self.timestamps[0].time)
+        }
+
+        None
+    }
+
+    pub fn end_time(&self) -> Option<Duration> {
+        if self.timestamps.len() > 0 {
+            return Some(self.timestamps[self.timestamps.len() - 1].time)
+        }
+
+        None
+    }
+
+    pub fn get_timestamps_surrounding(&self, time: &Duration) -> 
+      Option<(Timestamp, Timestamp)> 
+    {
+        if let Some(start_time) = self.start_time() {
+            if let Some(end_time) = self.end_time() {
+                if time < &start_time || time > &end_time {
+                    return None
+                }
+
+                for (idx, timestamp) in self.timestamps.iter().enumerate() {
+                    if timestamp.time > *time  {
+                        if idx == 0 {
+                            return None
+                        }
+
+                        return Some((self.timestamps[idx - 1].clone(), 
+                            self.timestamps[idx].clone()));
+                    }
+                }
+            }
+        }
+
+        None
+    }
 }
 
 #[derive(Debug)]
@@ -134,6 +168,6 @@ struct LyricTag {
 
 #[derive(Clone, Debug)]
 pub struct Timestamp {
-    position: usize,
-    time: Duration
+    pub position: usize,
+    pub time: Duration
 }
