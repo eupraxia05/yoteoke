@@ -25,3 +25,6 @@ Cargo.lock
 vcpkg_installed/*
 vcpkg-configuration.json
 vcpkg.json
+
+# just in case any output leaks its way into the repo
+*.mp4
