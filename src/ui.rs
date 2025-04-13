@@ -2,12 +2,10 @@ use bevy::prelude::*;
 use bevy::render::view::RenderLayers;
 use bevy_egui::egui::Style;
 use bevy_egui::{egui, EguiContexts, EguiPlugin, EguiUserTextures};
-use egui_file::FileDialog;
 use kira::command;
 use kira::sound::static_sound::StaticSoundHandle;
 use kira::sound::streaming::{StreamingSoundData, StreamingSoundHandle};
 use kira::sound::{FromFileError, PlaybackState, SoundData};
-use kira::tween::Tween;
 use serde::{Deserialize, Serialize};
 use std::io::Write;
 use std::ops::RangeInclusive;
@@ -15,38 +13,47 @@ use std::path::{PathBuf, Path};
 use std::time::Duration;
 use std::{fs::File, io::Read};
 use kira::{
-  manager::{
-    AudioManager, 
-    AudioManagerSettings, 
-    backend::DefaultBackend
-  },
-  sound::static_sound::{
-    StaticSoundData, 
-    StaticSoundSettings
-  },
+  AudioManager, 
+  AudioManagerSettings, 
+  DefaultBackend,
+  Tween
 };
 use crate::export::{ExportInitiatedEvent, ExportState};
-use crate::{EditorState, ProjectData};
+use crate::{EditorState, OpenProjectDialog, ProjectData};
 use crate::sub_viewport::SubViewport;
+use bevy_file_dialog::{FileDialogExt, DialogFilePicked, DialogFileLoaded};
+use crate::ThumbnailFilePathDialog;
 
 pub fn build(app: &mut App) {
   app.add_systems(Startup, startup);
   app.add_systems(Update, ui);
+  app.add_systems(Update, handle_thumbnail_file_path_dialog);
   app.insert_resource(ExportDialog::default());
+  app.add_systems(Update, handle_open_project_dialog);
+  app.add_systems(Update, handle_new_project_song_file_dialog_picked);
+  app.add_event::<SaveAsRequestedEvent>();
 }
 
 fn startup(mut commands: Commands) {
 
 }
 
-fn ui(mut contexts: EguiContexts, mut editor_state: ResMut<EditorState>,
+fn handle_open_project_dialog(mut events: EventReader<bevy_file_dialog::DialogFileLoaded<OpenProjectDialog>>, mut editor_state: NonSendMut<EditorState>) {
+  for ev in events.read() { 
+    editor_state.project_file_path = ev.path.clone();
+    editor_state.open(&ev.contents);
+  }
+}
+
+fn ui(mut contexts: EguiContexts, mut editor_state: NonSendMut<EditorState>,
   camera_tex_query: Query<&SubViewport>, images: Res<Assets<Image>>,
   mut export_dialog: ResMut<ExportDialog>,
   mut export_state: ResMut<ExportState>,
   mut export_event_writer: EventWriter<ExportInitiatedEvent>,
+  mut commands: Commands,
 ) {
   egui::TopBottomPanel::top("menu").show(contexts.ctx_mut(), |ui| {
-    menu_ui(ui, editor_state.reborrow(), export_dialog.as_mut(), &mut export_event_writer);
+    menu_ui(ui, editor_state.reborrow(), export_dialog.as_mut(), &mut export_event_writer, &mut commands);
   });
 
   egui::CentralPanel::default().show(contexts.ctx_mut(), |ui| {
@@ -73,13 +80,14 @@ fn ui(mut contexts: EguiContexts, mut editor_state: ResMut<EditorState>,
     }
   });
 
-  file_dialog_ui(&mut contexts, editor_state.reborrow(), export_dialog.reborrow());
+  file_dialog_ui(&mut contexts, editor_state.reborrow(), export_dialog.reborrow(), &mut commands);
 
-  export_dialog.show(contexts.ctx_mut(), &mut export_event_writer);
+  export_dialog.show(contexts.ctx_mut(), &mut export_event_writer, &mut commands);
 }
 
 fn menu_ui(ui: &mut egui::Ui, mut editor_state: Mut<EditorState>, 
-  export_dialog: &mut ExportDialog, export_event_writer: &mut EventWriter<ExportInitiatedEvent>) 
+  export_dialog: &mut ExportDialog, export_event_writer: &mut EventWriter<ExportInitiatedEvent>,
+  commands: &mut Commands) 
 {
   egui::menu::bar(ui, |ui| {
     ui.menu_button("File", |ui| {
@@ -87,18 +95,13 @@ fn menu_ui(ui: &mut egui::Ui, mut editor_state: Mut<EditorState>,
         editor_state.new();
       }
       if ui.button("Open...").clicked() {
-        println!("open button clicked");
-        let mut dialog = FileDialog::open_file(None);
-        dialog.open();
-        editor_state.open_dialog = Some(dialog);
+        commands.dialog().load_file::<crate::OpenProjectDialog>();
       }
       if ui.button("Save").clicked() {
         editor_state.save();
       }
       if ui.button("Save As...").clicked() {
-        let mut dialog = FileDialog::save_file(None);
-        dialog.open();
-        editor_state.file_dialog = Some(dialog)
+        commands.dialog().save_file::<crate::SaveAsDialog>(editor_state.serialize_project());
       }
     });
     ui.menu_button("Project", |ui| {
@@ -113,11 +116,18 @@ fn menu_ui(ui: &mut egui::Ui, mut editor_state: Mut<EditorState>,
   });
 }
 
+#[derive(Default, Event)]
+struct SaveAsRequestedEvent;
+
 fn lyrics_edit_ui(ui: &mut egui::Ui, mut editor_state: Mut<EditorState>) {
   let mut text_edit_changed = false;
   let mut cursor_pos = None;
-  let curr_time = Duration::from_secs_f64(editor_state.music_handle.as_mut().unwrap().position());
   let mut insert_desired = false;
+  let curr_time = if let Some(music_handle) = &editor_state.music_handle {
+    Duration::from_secs_f64(music_handle.position())
+  } else {
+    Duration::default()
+  };
   if let Some(project_data) = &mut editor_state.project_data {
     let title_str = format!("{} - {}", project_data.artist, project_data.title);
     ui.label(title_str);
@@ -148,6 +158,8 @@ fn lyrics_edit_ui(ui: &mut egui::Ui, mut editor_state: Mut<EditorState>) {
         text_edit_changed = true
       }
     }
+    // hack: keep carriage returns from entering lyrics
+    project_data.lyrics = project_data.lyrics.replace("\r", "");
   }
   if text_edit_changed {
     info!("lyrics marked dirty");
@@ -193,7 +205,14 @@ fn play_buttons_ui(ui: &mut egui::Ui, mut editor_state: Mut<EditorState>,
       editor_state.music_handle.as_mut().unwrap().seek_to(0.);
     }
     if ui.button("<-").clicked() {
-      editor_state.music_handle.as_mut().unwrap().seek_to((curr_time - Duration::from_secs_f64(5.)).as_secs_f64().max(0.));
+      let seek_duration = Duration::from_secs_f64(5.);
+      let seek_to_time = if curr_time > seek_duration {
+        (curr_time - Duration::from_secs_f64(5.)).as_secs_f64().max(0.)
+      } else {
+        0.
+      };
+      info!("Rewinding to {:?}", seek_to_time);
+      editor_state.music_handle.as_mut().unwrap().seek_to(seek_to_time);
     }
     if editor_state.music_handle.as_ref().unwrap().state() == PlaybackState::Paused {
       if ui.button(">").clicked() {
@@ -245,36 +264,11 @@ fn timeline_blocks_ui(ui: &mut egui::Ui, mut editor_state: Mut<EditorState>,) {
 }
 
 fn file_dialog_ui(contexts: &mut EguiContexts, mut editor_state: Mut<EditorState>,
-  mut export_dialog: Mut<ExportDialog>  
+  mut export_dialog: Mut<ExportDialog>, commands: &mut Commands
 ) {
-  let mut file_to_save = None;
-
-  if let Some(file_dialog) = &mut editor_state.file_dialog {
-    if file_dialog.show(contexts.ctx_mut()).selected() {
-      if let Some(file) = file_dialog.path() {
-        file_to_save = Some(PathBuf::from(file));
-      }
-    }
-  }
-
-  if let Some(file_to_save) = file_to_save {
-    editor_state.set_project_file_path(file_to_save);
-    editor_state.save();
-  }
 
   if let Some(new_project_dialog) = &mut editor_state.new_file_dialog {
-    new_project_dialog.show(contexts.ctx_mut());
-  }
-
-  let mut file_to_open = None;
-  if let Some(open_file_dialog) = &mut editor_state.open_dialog {
-    if open_file_dialog.show(contexts.ctx_mut()).selected() {
-      file_to_open = Some(PathBuf::from(open_file_dialog.path().unwrap()));
-    }
-  }
-
-  if let Some(file_to_open) = file_to_open {
-    editor_state.open(&file_to_open);
+    new_project_dialog.show(contexts.ctx_mut(), commands);
   }
 
   // todo: this is gross
@@ -282,7 +276,7 @@ fn file_dialog_ui(contexts: &mut EguiContexts, mut editor_state: Mut<EditorState
   if let Some(project_data) = &mut editor_state.project_data {
     project_data_temp = project_data.clone();
   }
-  editor_state.project_settings_dialog.show(contexts.ctx_mut(), &mut project_data_temp);
+  editor_state.project_settings_dialog.show(contexts.ctx_mut(), &mut project_data_temp, commands);
 
   if let Some(project_data) = &mut editor_state.project_data {
     *project_data = project_data_temp;
@@ -307,8 +301,6 @@ pub struct NewProjectDialog {
   pub is_submitted: bool,
   pub artist: String,
   pub title: String,
-  pub save_file_dialog: Option<FileDialog>,
-  pub song_file_dialog: Option<FileDialog>,
   pub song_file: Option<PathBuf>,
   pub save_file: Option<PathBuf>,
 }
@@ -320,8 +312,6 @@ impl Default for NewProjectDialog {
           is_submitted: false,
           artist: "glass beach".into(),
           title: "cul-de-sac".into(),
-          song_file_dialog: None,
-          save_file_dialog: None,
           song_file: None,
           save_file: None,
       }
@@ -333,7 +323,7 @@ pub fn open(&mut self) {
     self.is_open = true;
 }
 
-pub fn show(&mut self, ctx: &egui::Context) {
+pub fn show(&mut self, ctx: &egui::Context, commands: &mut Commands) {
   if self.is_open {
     egui::Window::new("New Project").show(ctx, |ui| {
       let mut last_visited_path: Option<PathBuf> = None;
@@ -359,66 +349,24 @@ pub fn show(&mut self, ctx: &egui::Context) {
           ui.label("No file selected");
         }
         if ui.button("Browse...").clicked() {
-          let mut song_file_dialog = FileDialog::open_file(None);
-          song_file_dialog.open();
-          self.song_file_dialog = Some(song_file_dialog);
+          commands.dialog().pick_file_path::<NewProjectSongFileDialog>();
         }
       });
 
-      ui.horizontal(|ui| {
-          ui.label("Project File");
-          if let Some(project_file_path) = &self.save_file {
-            ui.label(project_file_path.as_os_str().to_string_lossy());
-          } else {
-            ui.label("No file selected");
-          }
-          if ui.button("Browse...").clicked() {
-            let mut project_file_dialog = FileDialog::save_file(None);
-            project_file_dialog.open();
-            self.save_file_dialog = Some(project_file_dialog);
-          }
-      });
-
-      let can_create = self.save_file != None && self.song_file != None;
+      let can_create = self.song_file != None;
 
       if ui.add_enabled(can_create, egui::Button::new("Create")).clicked() {
         self.is_open = false;
         self.is_submitted = true;
       }
     });
-
-    if let Some(song_file_dialog) = &mut self.song_file_dialog {
-      song_file_dialog.show(ctx);
-      if song_file_dialog.selected() {
-        if let Some(path) = song_file_dialog.path() {
-          self.song_file = Some(PathBuf::from(path));
-          ctx.data_mut(|map| {
-            *map.get_persisted_mut_or_default("last_visited_path".into()) 
-              = Some(PathBuf::from(song_file_dialog.directory()));
-          });
-        }
-      }
-    }
-
-    if let Some(save_file_dialog) = &mut self.save_file_dialog {
-      save_file_dialog.show(ctx);
-      if save_file_dialog.selected() {
-        if let Some(path) = save_file_dialog.path() {
-          self.save_file = Some(PathBuf::from(path));
-          ctx.data_mut(|map| {
-            *map.get_persisted_mut_or_default("last_visited_path".into()) 
-              = Some(PathBuf::from(save_file_dialog.directory()));
-          });
-        }
-      }
-    }
   }
 }
 }
 
 #[derive(Default)]
 pub struct ProjectSettingsDialog {
-  is_open: bool
+  is_open: bool,
 }
 
 impl ProjectSettingsDialog {
@@ -437,15 +385,27 @@ impl ProjectSettingsDialog {
   }
 
   pub fn show(&mut self, ctx: &egui::Context, 
-    project_data: &mut ProjectData) 
+    project_data: &mut ProjectData, commands: &mut Commands) 
   {
     if self.is_open {
       egui::Window::new("Project Settings").show(ctx, |ui| {
         Self::color_property(ui, "Background color", &mut project_data.background_color);
         Self::color_property(ui, "Text color (unsung)", &mut project_data.unsung_color);
         Self::color_property(ui, "Text color (sung)", &mut project_data.sung_color);
+        ui.horizontal(|ui| {
+          ui.label("Thumbnail");
+          if ui.button("Set").clicked() {
+            commands.dialog().set_directory("/").set_title("Select Thumbnail Image").load_file::<ThumbnailFilePathDialog>();
+          }
+        });
       });
     }
+  }
+}
+
+fn handle_thumbnail_file_path_dialog(mut events: EventReader<DialogFilePicked<ThumbnailFilePathDialog>>) {
+  for ev in events.read() {
+    info!("{:?}", ev.path);
   }
 }
 
@@ -453,7 +413,6 @@ impl ProjectSettingsDialog {
 pub struct ExportDialog {
   is_open: bool,
   output_file: Option<PathBuf>,
-  output_file_dialog: Option<FileDialog>,
 }
 
 impl ExportDialog {
@@ -461,7 +420,7 @@ impl ExportDialog {
     self.is_open = true;
   }
 
-  pub fn show(&mut self, ctx: &egui::Context, export_event_writer: &mut EventWriter<ExportInitiatedEvent>) {
+  pub fn show(&mut self, ctx: &egui::Context, export_event_writer: &mut EventWriter<ExportInitiatedEvent>, commands: &mut Commands) {
     if self.is_open {
       egui::Window::new("Export").show(ctx, |ui| {
         ui.horizontal(|ui| {
@@ -469,10 +428,7 @@ impl ExportDialog {
           // todo: remove to_string_lossy
           ui.label(self.output_file.clone().unwrap_or("".into()).to_string_lossy());
           if ui.button("Browse...").clicked() {
-            info!("opening file dialog");
-            let mut file_dialog = FileDialog::save_file(None);
-            file_dialog.open();
-            self.output_file_dialog = Some(file_dialog);
+            // todo: browse
           }
         });
         if ui.button("Export").clicked() {
@@ -481,19 +437,19 @@ impl ExportDialog {
         }
       });
     }
+  }
+}
 
-    let mut selected_output_file = None;
-    if let Some(output_file_dialog) = &mut self.output_file_dialog {
-      info!("showing file dialog");
-      output_file_dialog.show(ctx);
-      
-      if output_file_dialog.selected() {
-        selected_output_file = Some(PathBuf::from(output_file_dialog.path().unwrap()));
-      }
-    }
+#[derive(Default)]
+pub struct NewProjectSongFileDialog;
 
-    if let Some(selected_output_file) = selected_output_file {
-      self.output_file = Some(selected_output_file);
+#[derive(Default)]
+pub struct NewProjectSaveFileDialog;
+
+fn handle_new_project_song_file_dialog_picked(mut events: EventReader<DialogFilePicked<NewProjectSongFileDialog>>, mut editor_state: NonSendMut<EditorState>) {
+  for ev in events.read() {
+    if let Some(new_project_dialog) = &mut editor_state.new_file_dialog {
+      new_project_dialog.song_file = Some(ev.path.clone());
     }
   }
 }

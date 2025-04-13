@@ -11,11 +11,13 @@ pub struct ParsedLyrics {
 impl ParsedLyrics {
     pub fn parse(lyrics: &String) -> Result<ParsedLyrics, String> {        
         let mut blocks = Vec::new();
-        let lines = lyrics.lines();
+        let normalized_lyrics = String::from_iter(normalize_line_endings::normalized(lyrics.chars()));
+        let lines = normalized_lyrics.lines();
 
         let mut curr_block = Block::default();
         for line in lines {
             let line = line.trim();
+            assert!(!line.contains("\r"));
             if !line.is_empty() {
                 let (tags, line_without_tags) = Self::extract_tags(line);
                 for tag in tags {
@@ -67,7 +69,7 @@ impl ParsedLyrics {
         let mut tag_len_so_far = 0;
         for range in tag_ranges {
             tags.push(LyricTag {
-                position: *range.start() - tag_len_so_far,
+                position: *range.start() - tag_len_so_far + 1,
                 tag: line[range.clone()].into()
             });
             tag_len_so_far += range.end() - range.start() + 1;

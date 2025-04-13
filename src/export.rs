@@ -74,7 +74,7 @@ fn handle_export_initiated(mut commands: Commands,
 }
 
 fn update_export(mut export_state: ResMut<ExportState>, mut commands: Commands,
-  editor_state: Res<EditorState>, mut tokio_runtime: ResMut<TokioTasksRuntime>) 
+  editor_state: NonSend<EditorState>, mut tokio_runtime: ResMut<TokioTasksRuntime>) 
 {
   if export_state.is_exporting {
     export_state.frame_idx += 1;
