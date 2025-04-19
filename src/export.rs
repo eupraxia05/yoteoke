@@ -9,7 +9,7 @@ use ffmpeg_cli::{Ffmpeg, FfmpegBuilder, File, Parameter};
 use std::process::Stdio;
 //use futures::{future::ready, StreamExt};
 
-use crate::EditorState;
+use crate::editor::EditorState;
 use crate::sub_viewport::SubViewport;
 
 pub fn build(app: &mut App) {

@@ -1,5 +1,8 @@
+use bevy::asset::RenderAssetUsages;
 use bevy::prelude::*;
+use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use bevy::render::view::RenderLayers;
+use bevy_egui::egui::load::SizedTexture;
 use bevy_egui::egui::Style;
 use bevy_egui::{egui, EguiContexts, EguiPlugin, EguiUserTextures};
 use kira::command;
@@ -18,11 +21,16 @@ use kira::{
   DefaultBackend,
   Tween
 };
+use image::{ImageReader, ImageDecoder, DynamicImage};
+
 use crate::export::{ExportInitiatedEvent, ExportState};
-use crate::{EditorState, OpenProjectDialog, ProjectData};
+use crate::project::NewProjectRequestedEvent;
+use crate::{editor::EditorState, project::OpenProjectDialog};
 use crate::sub_viewport::SubViewport;
 use bevy_file_dialog::{FileDialogExt, DialogFilePicked, DialogFileLoaded};
-use crate::ThumbnailFilePathDialog;
+use crate::project::ThumbnailFilePathDialog;
+use crate::stage::TitlecardUpdatedEvent;
+use crate::project::ProjectData;
 
 pub fn build(app: &mut App) {
   app.add_systems(Startup, startup);
@@ -30,18 +38,50 @@ pub fn build(app: &mut App) {
   app.add_systems(Update, handle_thumbnail_file_path_dialog);
   app.insert_resource(ExportDialog::default());
   app.add_systems(Update, handle_open_project_dialog);
-  app.add_systems(Update, handle_new_project_song_file_dialog_picked);
   app.add_event::<SaveAsRequestedEvent>();
+  app.add_event::<SaveProjectRequestedEvent>();
 }
 
 fn startup(mut commands: Commands) {
 
 }
 
-fn handle_open_project_dialog(mut events: EventReader<bevy_file_dialog::DialogFileLoaded<OpenProjectDialog>>, mut editor_state: NonSendMut<EditorState>) {
+fn handle_open_project_dialog(
+  mut events: EventReader<bevy_file_dialog::DialogFileLoaded<OpenProjectDialog>>, 
+  mut editor_state: NonSendMut<EditorState>,
+  mut titlecard_updated_events: EventWriter<TitlecardUpdatedEvent>,
+  mut images: ResMut<Assets<Image>>,
+  mut egui_user_textures: ResMut<EguiUserTextures>
+) {
   for ev in events.read() { 
     editor_state.project_file_path = ev.path.clone();
-    editor_state.open(&ev.contents);
+
+    if let Ok(mut data) = serde_json::from_slice::<ProjectData>(ev.contents.as_slice()) {
+      // hack: ensuring this field exists (should actually load projectdata 
+      // from a separate deserialized struct)
+      if data.titlecard_show_time.is_none() {
+        data.titlecard_show_time = Some(10.);
+      }
+      editor_state.project_data = Some(data);
+      editor_state.lyrics_dirty = true;
+    } else {
+        println!("couldn't deserialize file");
+    }
+
+    if let Some(titlecard_path) = &editor_state.project_data.as_ref().unwrap().thumbnail_path {
+      let load_result = load_titlecard_image(&titlecard_path, images.as_mut(), egui_user_textures.as_mut());
+      let Some((image_handle, egui_texture_id)) = load_result else {
+        return;
+      };
+  
+      editor_state.thumbnail_image = Some(image_handle);
+      editor_state.thumbnail_egui_tex_id = Some(egui_texture_id);
+      if let Some(project_data) = editor_state.project_data.as_mut() {
+        project_data.thumbnail_path = Some(ev.path.clone());
+      }  
+  
+      titlecard_updated_events.send_default();
+    }
   }
 }
 
@@ -50,10 +90,12 @@ fn ui(mut contexts: EguiContexts, mut editor_state: NonSendMut<EditorState>,
   mut export_dialog: ResMut<ExportDialog>,
   mut export_state: ResMut<ExportState>,
   mut export_event_writer: EventWriter<ExportInitiatedEvent>,
+  mut new_project_event_writer: EventWriter<NewProjectRequestedEvent>,
+  mut save_requested_event_writer: EventWriter<SaveProjectRequestedEvent>,
   mut commands: Commands,
 ) {
   egui::TopBottomPanel::top("menu").show(contexts.ctx_mut(), |ui| {
-    menu_ui(ui, editor_state.reborrow(), export_dialog.as_mut(), &mut export_event_writer, &mut commands);
+    menu_ui(ui, editor_state.reborrow(), export_dialog.as_mut(), &mut export_event_writer, &mut new_project_event_writer, &mut save_requested_event_writer, &mut commands);
   });
 
   egui::CentralPanel::default().show(contexts.ctx_mut(), |ui| {
@@ -86,22 +128,29 @@ fn ui(mut contexts: EguiContexts, mut editor_state: NonSendMut<EditorState>,
 }
 
 fn menu_ui(ui: &mut egui::Ui, mut editor_state: Mut<EditorState>, 
-  export_dialog: &mut ExportDialog, export_event_writer: &mut EventWriter<ExportInitiatedEvent>,
+  export_dialog: &mut ExportDialog, 
+  export_event_writer: &mut EventWriter<ExportInitiatedEvent>,
+  new_project_event_writer: &mut EventWriter<NewProjectRequestedEvent>,
+  save_requested_event_writer: &mut EventWriter<SaveProjectRequestedEvent>,
   commands: &mut Commands) 
 {
   egui::menu::bar(ui, |ui| {
     ui.menu_button("File", |ui| {
       if ui.button("New...").clicked() {
-        editor_state.new();
+        new_project_event_writer.send_default();
       }
       if ui.button("Open...").clicked() {
-        commands.dialog().load_file::<crate::OpenProjectDialog>();
+        commands.dialog().load_file::<crate::project::OpenProjectDialog>();
       }
       if ui.button("Save").clicked() {
-        editor_state.save();
+        save_requested_event_writer.send_default();
       }
       if ui.button("Save As...").clicked() {
-        commands.dialog().save_file::<crate::SaveAsDialog>(editor_state.serialize_project());
+        if let Some(project_data) = editor_state.project_data.as_ref() {
+          let serialized = serde_json::to_vec_pretty(project_data).unwrap();
+          commands.dialog().save_file::<crate::project::SaveAsDialog>(serialized);
+        }
+
       }
     });
     ui.menu_button("Project", |ui| {
@@ -178,7 +227,10 @@ fn timeline_ui(ui: &mut egui::Ui, mut editor_state: Mut<EditorState>) {
 }
 
 fn timeline_header_ui(ui: &mut egui::Ui, mut editor_state: Mut<EditorState>) {
-  let curr_time = Duration::from_secs_f64(editor_state.music_handle.as_mut().unwrap().position());
+  let Some(music_handle) = editor_state.music_handle.as_mut() else {
+    return;
+  };
+  let curr_time = Duration::from_secs_f64(music_handle.position());
   let total_time = editor_state.duration.unwrap();
   egui::SidePanel::new(egui::panel::Side::Left, "play_buttons").show_inside(ui, |ui| {
     play_buttons_ui(ui, editor_state.reborrow(), curr_time, total_time);
@@ -276,7 +328,8 @@ fn file_dialog_ui(contexts: &mut EguiContexts, mut editor_state: Mut<EditorState
   if let Some(project_data) = &mut editor_state.project_data {
     project_data_temp = project_data.clone();
   }
-  editor_state.project_settings_dialog.show(contexts.ctx_mut(), &mut project_data_temp, commands);
+  let thumbnail_egui_tex_id = editor_state.thumbnail_egui_tex_id.clone();
+  editor_state.project_settings_dialog.show(contexts.ctx_mut(), &mut project_data_temp, commands, thumbnail_egui_tex_id);
 
   if let Some(project_data) = &mut editor_state.project_data {
     *project_data = project_data_temp;
@@ -294,74 +347,6 @@ fn preview_ui(ui: &mut egui::Ui, mut editor_state: Mut<EditorState>,
   egui::CentralPanel::default().show_inside(ui, |ui| {
     camera_tex.show(ui, images);
   });
-}
-
-pub struct NewProjectDialog {
-  is_open: bool,
-  pub is_submitted: bool,
-  pub artist: String,
-  pub title: String,
-  pub song_file: Option<PathBuf>,
-  pub save_file: Option<PathBuf>,
-}
-
-impl Default for NewProjectDialog {
-  fn default() -> Self {
-      Self {
-          is_open: false,
-          is_submitted: false,
-          artist: "glass beach".into(),
-          title: "cul-de-sac".into(),
-          song_file: None,
-          save_file: None,
-      }
-  }
-}
-
-impl NewProjectDialog {
-pub fn open(&mut self) {
-    self.is_open = true;
-}
-
-pub fn show(&mut self, ctx: &egui::Context, commands: &mut Commands) {
-  if self.is_open {
-    egui::Window::new("New Project").show(ctx, |ui| {
-      let mut last_visited_path: Option<PathBuf> = None;
-      ui.data_mut(|map| {
-        last_visited_path = map.get_persisted("last_visited_path".into());
-      });
-
-      ui.horizontal(|ui| {
-        ui.label("Artist");
-        ui.text_edit_singleline(&mut self.artist)
-      });
-
-      ui.horizontal(|ui| {
-        ui.label("Title");
-        ui.text_edit_singleline(&mut self.title)
-      });
-
-      ui.horizontal(|ui| {
-        ui.label("Song File");
-        if let Some(song_file_path) = &self.song_file {
-          ui.label(song_file_path.as_os_str().to_string_lossy());
-        } else {
-          ui.label("No file selected");
-        }
-        if ui.button("Browse...").clicked() {
-          commands.dialog().pick_file_path::<NewProjectSongFileDialog>();
-        }
-      });
-
-      let can_create = self.song_file != None;
-
-      if ui.add_enabled(can_create, egui::Button::new("Create")).clicked() {
-        self.is_open = false;
-        self.is_submitted = true;
-      }
-    });
-  }
-}
 }
 
 #[derive(Default)]
@@ -385,7 +370,8 @@ impl ProjectSettingsDialog {
   }
 
   pub fn show(&mut self, ctx: &egui::Context, 
-    project_data: &mut ProjectData, commands: &mut Commands) 
+    project_data: &mut ProjectData, commands: &mut Commands,
+    thumbnail_egui_tex_id: Option<egui::TextureId>) 
   {
     if self.is_open {
       egui::Window::new("Project Settings").show(ctx, |ui| {
@@ -395,17 +381,75 @@ impl ProjectSettingsDialog {
         ui.horizontal(|ui| {
           ui.label("Thumbnail");
           if ui.button("Set").clicked() {
-            commands.dialog().set_directory("/").set_title("Select Thumbnail Image").load_file::<ThumbnailFilePathDialog>();
+            commands.dialog().set_directory("/").set_title("Select Thumbnail Image").pick_file_path::<ThumbnailFilePathDialog>();
           }
+          if let Some(img) = thumbnail_egui_tex_id {
+            ui.image(egui::ImageSource::Texture(SizedTexture::new(img, [128., 72.])));
+          }
+        });
+
+        ui.horizontal(|ui| {
+          ui.label("Titlecard show time");
+          ui.add(egui::DragValue::new(project_data.titlecard_show_time.as_mut().unwrap()).speed(0.1));
         });
       });
     }
   }
 }
 
-fn handle_thumbnail_file_path_dialog(mut events: EventReader<DialogFilePicked<ThumbnailFilePathDialog>>) {
+fn load_titlecard_image(titlecard_path: &PathBuf, images: &mut Assets<Image>,
+  egui_user_textures: &mut EguiUserTextures) 
+  -> Option<(Handle<Image>, egui::TextureId)>
+{
+  let reader_result = ImageReader::open(titlecard_path.clone());
+  let Ok(reader) = reader_result else {
+    error!("error reading titlecard image: {:?}", reader_result.err().unwrap());
+    return None;
+  };
+
+  let decode_result = reader.decode();
+  let Ok(decode) = decode_result else {
+    error!("error decoding titlecard image: {:?}", decode_result.err().unwrap());
+    return None;
+  };
+
+  let converted_img = decode.to_rgba8();
+  let image = Image::new(
+    Extent3d {
+      width: decode.width(),
+      height: decode.height(),
+      depth_or_array_layers: 1
+    }, 
+    TextureDimension::D2,
+    converted_img.into_vec(),
+    TextureFormat::Rgba8Unorm,
+    RenderAssetUsages::RENDER_WORLD | RenderAssetUsages::MAIN_WORLD);
+  let image_handle = images.add(image);
+  let egui_texture_id = egui_user_textures.add_image(image_handle.clone());
+
+  Some((image_handle, egui_texture_id))
+}
+
+fn handle_thumbnail_file_path_dialog(
+  mut events: EventReader<DialogFilePicked<ThumbnailFilePathDialog>>,
+  asset_server: Res<AssetServer>,
+  mut egui_user_textures: ResMut<EguiUserTextures>,
+  mut editor_state: NonSendMut<EditorState>,
+  mut images: ResMut<Assets<Image>>,
+  mut titlecard_updated_events: EventWriter<TitlecardUpdatedEvent>
+) {
   for ev in events.read() {
-    info!("{:?}", ev.path);
+    let load_result = load_titlecard_image(&ev.path, images.as_mut(), egui_user_textures.as_mut());
+    let Some((image_handle, egui_texture_id)) = load_result else {
+      return;
+    };
+
+    editor_state.thumbnail_image = Some(image_handle);
+    editor_state.thumbnail_egui_tex_id = Some(egui_texture_id);
+    if let Some(project_data) = editor_state.project_data.as_mut() {
+      project_data.thumbnail_path = Some(ev.path.clone());
+    }
+    titlecard_updated_events.send_default();    
   }
 }
 
@@ -440,16 +484,5 @@ impl ExportDialog {
   }
 }
 
-#[derive(Default)]
-pub struct NewProjectSongFileDialog;
-
-#[derive(Default)]
-pub struct NewProjectSaveFileDialog;
-
-fn handle_new_project_song_file_dialog_picked(mut events: EventReader<DialogFilePicked<NewProjectSongFileDialog>>, mut editor_state: NonSendMut<EditorState>) {
-  for ev in events.read() {
-    if let Some(new_project_dialog) = &mut editor_state.new_file_dialog {
-      new_project_dialog.song_file = Some(ev.path.clone());
-    }
-  }
-}
+#[derive(Event, Default)]
+pub struct SaveProjectRequestedEvent;

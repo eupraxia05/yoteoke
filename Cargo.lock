@@ -6570,6 +6570,7 @@ dependencies = [
  "bevy_image_export",
  "directories",
  "ffmpeg-cli",
+ "image",
  "kira",
  "normalize-line-endings",
  "regex",

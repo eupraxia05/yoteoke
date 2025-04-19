@@ -4,8 +4,34 @@ use regex::Regex;
 use std::ops::Range;
 use bevy::prelude::*;
 
+use crate::editor::EditorState;
+
+pub struct LyricsPlugin;
+
+impl Plugin for LyricsPlugin {
+  fn build(&self, app: &mut App) {
+    app.add_systems(Update, update);
+  }
+}
+
+fn update(mut editor_state: NonSendMut<EditorState>) {
+  if editor_state.lyrics_dirty {
+    info!("updating lyrics");
+    editor_state.parsed_lyrics = None;
+    match ParsedLyrics::parse(&editor_state.project_data.as_ref().unwrap().lyrics) {
+      Ok(lyrics) => {
+        editor_state.parsed_lyrics = Some(lyrics);
+      },
+      Err(err) => {
+        error!("Error parsing lyrics: {:?}", err);
+      }
+    }
+    editor_state.lyrics_dirty = false;
+  }
+}
+
 pub struct ParsedLyrics {
-    pub blocks: Vec<Block>,
+  pub blocks: Vec<Block>,
 }
 
 impl ParsedLyrics {
