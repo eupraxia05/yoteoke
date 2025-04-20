@@ -17,3 +17,8 @@ bevy_image_export = "0.12.0"
 normalize-line-endings = "0.3.0"
 bevy_file_dialog = { git = "https://github.com/eupraxia05/bevy_file_dialog.git" }
 image = "0.25.5"
+sadness-generator = "0.6.0"
+crash-handler = "0.6.2"
+minidump-writer = "0.8.9"
+minidumper-child = "0.2.2"
+minidump = "0.25.0"

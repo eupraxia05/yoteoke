@@ -3,6 +3,7 @@ use std::time::Duration;
 use regex::Regex;
 use std::ops::Range;
 use bevy::prelude::*;
+use bevy_egui::egui;
 
 use crate::editor::EditorState;
 
@@ -198,4 +199,52 @@ struct LyricTag {
 pub struct Timestamp {
     pub position: usize,
     pub time: Duration
+}
+
+pub fn lyrics_edit_ui(mut ui: InMut<egui::Ui>, mut editor_state: NonSendMut<EditorState>) {
+  let mut text_edit_changed = false;
+  let mut cursor_pos = None;
+  let mut insert_desired = false;
+  let curr_time = if let Some(music_handle) = &editor_state.music_handle {
+    Duration::from_secs_f64(music_handle.position())
+  } else {
+    Duration::default()
+  };
+  if let Some(project_data) = &mut editor_state.project_data {
+    let title_str = format!("{} - {}", project_data.artist, project_data.title);
+    ui.label(title_str);
+    if ui.button("Insert").clicked() {
+      insert_desired = true;
+    }
+    ui.separator();
+    egui::ScrollArea::both().show(&mut ui, |ui| {
+      let text_edit_response = ui.add_sized(ui.available_size(), 
+        egui::TextEdit::multiline(&mut project_data.lyrics).code_editor());
+      if text_edit_response.changed() {
+        info!("text edit changed");
+        text_edit_changed = true;
+      }
+      if let Some(text_edit_state) = egui::text_edit::TextEditState::load(ui.ctx(), 
+        text_edit_response.id) 
+      {
+        if let Some(char_range) = text_edit_state.cursor.char_range() {
+          cursor_pos = Some(char_range.primary);
+        }
+      }
+    });
+    if insert_desired {
+      if let Some(cursor_pos) = cursor_pos {
+        let str_to_insert = format!("[{:0>2}:{:0>2}.{:0>3}]", 
+          curr_time.as_secs() / 60, curr_time.as_secs() % 60, curr_time.subsec_millis());
+        project_data.lyrics.insert_str(cursor_pos.index, &str_to_insert);
+        text_edit_changed = true
+      }
+    }
+    // hack: keep carriage returns from entering lyrics
+    project_data.lyrics = project_data.lyrics.replace("\r", "");
+  }
+  if text_edit_changed {
+    info!("lyrics marked dirty");
+    editor_state.lyrics_dirty = true;
+  }
 }

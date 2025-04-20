@@ -5,6 +5,7 @@ use crate::editor::EditorState;
 use crate::export::ExportState;
 use bevy::render::view::RenderLayers;
 use crate::SubViewport;
+use bevy_egui::egui;
 
 pub struct StagePlugin;
 
@@ -157,4 +158,16 @@ fn handle_titlecard_updated(mut events: EventReader<TitlecardUpdatedEvent>,
         Handle::default()
       }
   }
+}
+
+pub fn preview_ui(mut ui: InMut<egui::Ui>, camera_tex_query: Query<&SubViewport>, images: Res<Assets<Image>>, export_state: Res<ExportState>) 
+{
+  egui::TopBottomPanel::top("preview_header").show_inside(&mut ui, |ui| {
+    if export_state.is_exporting() {
+      ui.label("Exporting...");
+    }
+  });
+  egui::CentralPanel::default().show_inside(&mut ui, |ui| {
+    camera_tex_query.single().show(ui);
+  });
 }

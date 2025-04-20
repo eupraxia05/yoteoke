@@ -14,6 +14,7 @@ Cargo.lock
 *.pdb
 
 .vscode/
+.VsCodeCounter
 
 # RustRover
 #  JetBrains specific template is maintained in a separate JetBrains.gitignore that can
@@ -28,3 +29,6 @@ vcpkg.json
 
 # just in case any output leaks its way into the repo
 *.mp4
+
+# crash dumps
+*.dmp

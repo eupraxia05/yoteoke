@@ -1,12 +1,11 @@
 //! A texture for showing the view of a camera. Analogous to Godot's SubViewport.
 
 use bevy::prelude::*;
-use bevy::render::RenderPlugin;
 use bevy::render::render_resource::{Extent3d, TextureDescriptor, 
     TextureDimension, TextureFormat, TextureUsages};
 use bevy::render::view::RenderLayers;
-use bevy::render::camera::{RenderTarget, ScalingMode};
-use bevy_egui::{EguiContexts, EguiUserTextures};
+use bevy::render::camera::RenderTarget;
+use bevy_egui::EguiUserTextures;
 use bevy_egui::egui;
 
 pub fn build(app: &mut App) {
@@ -111,11 +110,11 @@ impl SubViewport {
     }
   }
 
-  pub fn show(&self, ui: &mut egui::Ui, images: &Assets<Image>) {
-    if let Some(image) = &self.image {
+  pub fn show(&self, ui: &mut egui::Ui) {
+    if let Some(egui_texture_id) = &self.egui_texture_id {
       let available_size = ui.available_size();
       ui.image(egui::load::SizedTexture::new(
-        self.egui_texture_id.unwrap(), 
+        *egui_texture_id,
         egui::vec2(
             available_size.x,
             available_size.x * 1080. / 1920.

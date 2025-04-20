@@ -2,15 +2,13 @@ use bevy::prelude::*;
 use bevy::render::RenderPlugin;
 use bevy_egui::EguiPlugin;
 use bevy_image_export::ImageExportPlugin;
+use crash_handling::CrashHandlerPlugin;
 use lyrics::LyricsPlugin;
 use project::ProjectPlugin;
 use bevy_file_dialog::prelude::*;
 
 mod lyrics;
 use crate::lyrics::ParsedLyrics;
-
-mod ui;
-use crate::ui::ProjectSettingsDialog;
 
 mod sub_viewport;
 use crate::sub_viewport::SubViewport;
@@ -29,9 +27,15 @@ use crate::audio::AudioPlugin;
 mod editor;
 use crate::editor::EditorPlugin;
 
+mod crash_handling;
+
+mod timeline;
+
 use bevy_tokio_tasks::TokioTasksPlugin;
 
 fn main() {
+  let _guard = crash_handling::run_handler();
+
   let mut app = App::new();
 
   let export_plugin = ImageExportPlugin::default();
@@ -47,6 +51,7 @@ fn main() {
     .add_plugins(export_plugin)
     .add_plugins(EguiPlugin)
     .add_plugins(TokioTasksPlugin::default())
+    .add_plugins(CrashHandlerPlugin)
     .add_plugins(project::configure_file_dialog_plugin(FileDialogPlugin::new()))
     .add_plugins(EditorPlugin)
     .add_plugins(ProjectPlugin)
@@ -55,7 +60,6 @@ fn main() {
     .add_plugins(StagePlugin);
 
 
-  ui::build(&mut app);
   sub_viewport::build(&mut app);
   export::build(&mut app);
 

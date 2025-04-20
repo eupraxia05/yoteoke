@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use bevy::prelude::*;
 use bevy_image_export::{ImageExport, ImageExportPlugin, ImageExportSettings, ImageExportSource};
@@ -7,6 +7,7 @@ use std::fs;
 use bevy_tokio_tasks::TokioTasksRuntime;
 use ffmpeg_cli::{Ffmpeg, FfmpegBuilder, File, Parameter};
 use std::process::Stdio;
+use bevy_egui::egui;
 //use futures::{future::ready, StreamExt};
 
 use crate::editor::EditorState;
@@ -18,6 +19,7 @@ pub fn build(app: &mut App) {
   app.add_event::<ExportInitiatedEvent>();
   app.add_systems(Update, handle_export_initiated);
   app.add_systems(Update, update_export);
+  app.insert_resource(ExportDialog::default());
 }
 
 fn startup() {
@@ -128,6 +130,37 @@ fn update_export(mut export_state: ResMut<ExportState>, mut commands: Commands,
           );
         });
       }
+    }
+  }
+}
+
+#[derive(Default, Resource)]
+pub struct ExportDialog {
+  is_open: bool,
+  output_file: Option<PathBuf>,
+}
+
+impl ExportDialog {
+  pub fn open(&mut self) {
+    self.is_open = true;
+  }
+
+  pub fn show(&mut self, ctx: &egui::Context, export_event_writer: &mut EventWriter<ExportInitiatedEvent>) {
+    if self.is_open {
+      egui::Window::new("Export").show(ctx, |ui| {
+        ui.horizontal(|ui| {
+          ui.label("Output File");
+          // todo: remove to_string_lossy
+          ui.label(self.output_file.clone().unwrap_or("".into()).to_string_lossy());
+          if ui.button("Browse...").clicked() {
+            // todo: browse
+          }
+        });
+        if ui.button("Export").clicked() {
+          export_event_writer.send(ExportInitiatedEvent::default());
+          self.is_open = false;
+        }
+      });
     }
   }
 }
