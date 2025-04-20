@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 use bevy_egui::egui;
 use std::path::PathBuf;
-use bevy_file_dialog::{prelude::*, FileDialog};
+use bevy_file_dialog::prelude::*;
 use std::fs::File;
 use std::io::Write;
 use serde::{Serialize, Deserialize};
@@ -37,7 +37,7 @@ impl Plugin for ProjectPlugin {
 pub struct NewProjectRequestedEvent;
 
 fn handle_new_project_requested_events(mut events: EventReader<NewProjectRequestedEvent>, mut editor_state: NonSendMut<EditorState>) {
-  for ev in events.read() {
+  for _ in events.read() {
     let mut new_file_dialog = NewProjectDialog::default();
     new_file_dialog.open();
     editor_state.new_file_dialog = Some(new_file_dialog);
@@ -50,7 +50,6 @@ pub struct NewProjectDialog {
   pub artist: String,
   pub title: String,
   pub song_file: Option<PathBuf>,
-  pub save_file: Option<PathBuf>,
 }
 
 impl Default for NewProjectDialog {
@@ -61,7 +60,6 @@ impl Default for NewProjectDialog {
           artist: "glass beach".into(),
           title: "cul-de-sac".into(),
           song_file: None,
-          save_file: None,
       }
   }
 }
@@ -159,7 +157,7 @@ fn handle_new_project_save_file_dialog(
   }
 }
 
-fn handle_save_project_requested_event(mut events: EventReader<SaveProjectRequestedEvent>, mut editor_state: NonSendMut<EditorState>) {
+fn handle_save_project_requested_event(mut events: EventReader<SaveProjectRequestedEvent>, editor_state: NonSend<EditorState>) {
   for _ in events.read() {
     let mut vec = Vec::new();
     if let Some(project_data) = &editor_state.project_data {

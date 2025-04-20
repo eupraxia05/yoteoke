@@ -160,7 +160,7 @@ fn handle_titlecard_updated(mut events: EventReader<TitlecardUpdatedEvent>,
   }
 }
 
-pub fn preview_ui(mut ui: InMut<egui::Ui>, camera_tex_query: Query<&SubViewport>, images: Res<Assets<Image>>, export_state: Res<ExportState>) 
+pub fn preview_ui(mut ui: InMut<egui::Ui>, camera_tex_query: Query<&SubViewport>, export_state: Res<ExportState>) 
 {
   egui::TopBottomPanel::top("preview_header").show_inside(&mut ui, |ui| {
     if export_state.is_exporting() {

@@ -2,7 +2,6 @@ use bevy::prelude::*;
 use bevy::render::RenderPlugin;
 use bevy_egui::EguiPlugin;
 use bevy_image_export::ImageExportPlugin;
-use crash_handling::CrashHandlerPlugin;
 use lyrics::LyricsPlugin;
 use project::ProjectPlugin;
 use bevy_file_dialog::prelude::*;
@@ -51,7 +50,6 @@ fn main() {
     .add_plugins(export_plugin)
     .add_plugins(EguiPlugin)
     .add_plugins(TokioTasksPlugin::default())
-    .add_plugins(CrashHandlerPlugin)
     .add_plugins(project::configure_file_dialog_plugin(FileDialogPlugin::new()))
     .add_plugins(EditorPlugin)
     .add_plugins(ProjectPlugin)

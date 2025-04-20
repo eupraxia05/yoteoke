@@ -1,11 +1,11 @@
 use std::path::{Path, PathBuf};
 
 use bevy::prelude::*;
-use bevy_image_export::{ImageExport, ImageExportPlugin, ImageExportSettings, ImageExportSource};
+use bevy_image_export::{ImageExport, ImageExportSettings, ImageExportSource};
 use directories::ProjectDirs;
 use std::fs;
 use bevy_tokio_tasks::TokioTasksRuntime;
-use ffmpeg_cli::{Ffmpeg, FfmpegBuilder, File, Parameter};
+use ffmpeg_cli::{FfmpegBuilder, File, Parameter};
 use std::process::Stdio;
 use bevy_egui::egui;
 //use futures::{future::ready, StreamExt};
@@ -50,9 +50,9 @@ fn handle_export_initiated(mut commands: Commands,
   mut event_reader: EventReader<ExportInitiatedEvent>,
   mut export_state: ResMut<ExportState>,
   mut export_sources: ResMut<Assets<ImageExportSource>>,
-  mut sub_viewport_query: Query<&mut SubViewport>) 
+  sub_viewport_query: Query<&mut SubViewport>) 
 { 
-  for ev in event_reader.read() {
+  for _ in event_reader.read() {
     if !export_state.is_exporting {
       export_state.is_exporting = true;
 
@@ -76,7 +76,7 @@ fn handle_export_initiated(mut commands: Commands,
 }
 
 fn update_export(mut export_state: ResMut<ExportState>, mut commands: Commands,
-  editor_state: NonSend<EditorState>, mut tokio_runtime: ResMut<TokioTasksRuntime>) 
+  editor_state: NonSend<EditorState>, tokio_runtime: Res<TokioTasksRuntime>) 
 {
   if export_state.is_exporting {
     export_state.frame_idx += 1;

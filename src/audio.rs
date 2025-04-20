@@ -1,6 +1,5 @@
 use bevy::prelude::*;
-use kira::sound::streaming::{StreamingSoundData, StreamingSoundHandle};
-use kira::sound::FromFileError;
+use kira::sound::streaming::StreamingSoundData;
 use kira::{
   DefaultBackend,
   AudioManagerSettings,
@@ -19,7 +18,7 @@ impl Plugin for AudioPlugin {
   }
 }
 
-fn startup(mut commands: Commands, mut editor_state: NonSendMut<EditorState>)
+fn startup(mut editor_state: NonSendMut<EditorState>)
 {
   // startup kira audio
   match AudioManager::<DefaultBackend>::new(AudioManagerSettings::default())

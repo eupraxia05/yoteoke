@@ -56,7 +56,7 @@ fn ui(world: &mut World) {
     contexts.ctx_mut().clone()
   };
   egui::TopBottomPanel::top("menu").show(&ctx, |ui| {
-    world.run_system_cached_with(menu_ui, ui);
+    world.run_system_cached_with(menu_ui, ui).expect("Couldn't run menu_ui system!");
   });
 
   let project_loaded = world.get_non_send_resource::<EditorState>().unwrap().project_data.is_some();
@@ -67,7 +67,7 @@ fn ui(world: &mut World) {
         .default_width(512.)
         .show_inside(ui, |ui| 
         {
-          world.run_system_cached_with(crate::lyrics::lyrics_edit_ui, ui);
+          world.run_system_cached_with(crate::lyrics::lyrics_edit_ui, ui).expect("Couldn't run lyrics_edit_ui system!");
         }
       );
       egui::CentralPanel::default().show_inside(ui, |ui| {
@@ -75,26 +75,26 @@ fn ui(world: &mut World) {
           .exact_height(256.)
           .show_inside(ui, |ui|
           {
-            world.run_system_cached_with(crate::timeline::timeline_ui, ui);
+            world.run_system_cached_with(crate::timeline::timeline_ui, ui).expect("Couldn't run timeline_ui system!");
           });
         egui::CentralPanel::default().show_inside(ui, |ui| {
-          world.run_system_cached_with(crate::stage::preview_ui, ui);
+          world.run_system_cached_with(crate::stage::preview_ui, ui).expect("Couldn't run preview_ui system!");
         });
       });
     }
   });
 
-  world.run_system_cached(file_dialog_ui);
+  world.run_system_cached(file_dialog_ui).expect("Couldn't run file_dialog_ui system!");
 }
 
 fn menu_ui(ui: InMut<egui::Ui>, world: &mut World) 
 {
   egui::menu::bar(ui.0, |ui| {
     ui.menu_button("File", |ui| {
-      world.run_system_cached_with(crate::project::file_ops_menu_ui, ui);
+      world.run_system_cached_with(crate::project::file_ops_menu_ui, ui).expect("Couldn't run file_ops_menu_ui system!");
     });
     ui.menu_button("Project", |ui| {
-      world.run_system_cached_with(crate::project::project_menu_ui, ui);
+      world.run_system_cached_with(crate::project::project_menu_ui, ui).expect("Couldn't run project_menu_ui system!");
     });
 
     ui.menu_button("Debug", |ui| {
