@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use bevy::prelude::*;
+use bevy::window::WindowCloseRequested;
 use bevy_image_export::{ImageExport, ImageExportSettings, ImageExportSource};
 use directories::ProjectDirs;
 use std::fs;
@@ -8,6 +9,7 @@ use bevy_tokio_tasks::TokioTasksRuntime;
 use ffmpeg_cli::{FfmpegBuilder, File, Parameter};
 use std::process::Stdio;
 use bevy_egui::egui;
+use bevy_file_dialog::prelude::*;
 //use futures::{future::ready, StreamExt};
 
 use crate::editor::EditorState;
@@ -19,7 +21,22 @@ pub fn build(app: &mut App) {
   app.add_event::<ExportInitiatedEvent>();
   app.add_systems(Update, handle_export_initiated);
   app.add_systems(Update, update_export);
-  app.insert_resource(ExportDialog::default());
+  app.add_systems(Update, handle_export_file_path_dialog);
+}
+
+fn handle_export_file_path_dialog(
+  mut events: EventReader<DialogFileSaved<ExportFilePathDialog>>,
+  mut export_state: ResMut<ExportState>,
+  mut export_initiated_events: EventWriter<ExportInitiatedEvent>
+) {
+  for ev in events.read() {
+    export_state.output_path = ev.path.clone();
+    export_initiated_events.send_default();
+  }
+}
+
+pub fn configure_file_dialog_plugin(plugin: FileDialogPlugin) -> FileDialogPlugin {
+  plugin.with_save_file::<ExportFilePathDialog>()
 }
 
 fn startup() {
@@ -28,9 +45,10 @@ fn startup() {
 
 #[derive(Default, Resource, Debug)]
 pub struct ExportState {
-  is_exporting: bool,
+  pub is_exporting: bool,
   frame_idx: usize,
-  export_ent: Option<Entity>
+  export_ent: Option<Entity>,
+  output_path: PathBuf,
 }
 
 impl ExportState {
@@ -80,7 +98,7 @@ fn update_export(mut export_state: ResMut<ExportState>, mut commands: Commands,
 {
   if export_state.is_exporting {
     export_state.frame_idx += 1;
-    if export_state.frame_idx as f64 / 12. > editor_state.duration.unwrap().as_secs_f64() {
+    if export_state.frame_idx as f64 / 12. > editor_state.duration.unwrap().as_secs_f64() + editor_state.project_data.as_ref().unwrap().song_delay_time.unwrap() as f64 {
       if let Some(export_ent) = export_state.export_ent {
         commands.entity(export_ent).despawn();
         export_state.export_ent = None;
@@ -90,6 +108,10 @@ fn update_export(mut export_state: ResMut<ExportState>, mut commands: Commands,
         info!("image dir: {:?}", img_dir);
 
         let song_path: String = String::from(editor_state.project_data.as_ref().unwrap().song_file.as_ref().unwrap().as_os_str().to_string_lossy());
+
+        let output_path = String::from(export_state.output_path.as_os_str().to_str().unwrap());
+
+        let song_delay_time = editor_state.project_data.as_ref().unwrap().song_delay_time.unwrap().to_string();
 
         tokio_runtime.spawn_background_task(|_ctx| async move {
           let input_path: String = img_dir.join("%05d.png").as_os_str().to_string_lossy().into();
@@ -101,9 +123,10 @@ fn update_export(mut export_state: ResMut<ExportState>, mut commands: Commands,
             .option(Parameter::Single("y"))
             .option(Parameter::KeyValue("r", "12"))
             .input(File::new(&input_path))
-            .input(File::new(&song_path)) 
+            .input(File::new(&song_path).option(Parameter::KeyValue("itsoffset", song_delay_time.as_str()))) 
             .output(
-              File::new("output.mp4")
+              // todo: get rid of unwrap
+              File::new(output_path.as_str())
                 .option(Parameter::KeyValue("vcodec", "libx264"))
                 .option(Parameter::KeyValue("acodec", "mp3"))
                 .option(Parameter::KeyValue("crf", "25"))
@@ -133,34 +156,4 @@ fn update_export(mut export_state: ResMut<ExportState>, mut commands: Commands,
     }
   }
 }
-
-#[derive(Default, Resource)]
-pub struct ExportDialog {
-  is_open: bool,
-  output_file: Option<PathBuf>,
-}
-
-impl ExportDialog {
-  pub fn open(&mut self) {
-    self.is_open = true;
-  }
-
-  pub fn show(&mut self, ctx: &egui::Context, export_event_writer: &mut EventWriter<ExportInitiatedEvent>) {
-    if self.is_open {
-      egui::Window::new("Export").show(ctx, |ui| {
-        ui.horizontal(|ui| {
-          ui.label("Output File");
-          // todo: remove to_string_lossy
-          ui.label(self.output_file.clone().unwrap_or("".into()).to_string_lossy());
-          if ui.button("Browse...").clicked() {
-            // todo: browse
-          }
-        });
-        if ui.button("Export").clicked() {
-          export_event_writer.send(ExportInitiatedEvent::default());
-          self.is_open = false;
-        }
-      });
-    }
-  }
-}
+pub struct ExportFilePathDialog;

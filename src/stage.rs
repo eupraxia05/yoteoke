@@ -51,12 +51,14 @@ fn update_preview(editor_state: NonSend<EditorState>,
   mut camera_tex_query: Query<&mut SubViewport>,
 )
 {
+  let mut pre_delay_time = 0.;
   if let Some(project_data) = &editor_state.project_data {
-    camera_tex_query.single_mut().clear_color = ClearColorConfig::Custom(project_data.background_color.unwrap_or_default());  
+    camera_tex_query.single_mut().clear_color = ClearColorConfig::Custom(project_data.background_color.unwrap_or_default());
+    pre_delay_time = project_data.song_delay_time.unwrap();
   }
 
   let song_position = if export_state.is_exporting() {
-    Duration::from_secs_f64(export_state.frame_idx() as f64 / 12.)
+    Duration::from_secs_f64((export_state.frame_idx() as f64 / 12. - pre_delay_time as f64).max(0.))
   } else {
     editor_state.playhead_position()
   };
@@ -129,7 +131,14 @@ fn update_preview(editor_state: NonSend<EditorState>,
 
   let mut titlecard_stage_sprite_alpha = 0.0;
   if editor_state.thumbnail_image.is_some() {
-    titlecard_stage_sprite_alpha = (editor_state.project_data.as_ref().unwrap().titlecard_show_time.unwrap() - song_position.as_secs_f32()).clamp(0.0, 1.0);
+    let curr_pre_delay_time = if export_state.is_exporting {
+      (export_state.frame_idx() as f32 / 12.).clamp(0., pre_delay_time)
+    } else {
+      editor_state.curr_pre_delay_time as f32
+    };
+    titlecard_stage_sprite_alpha = (editor_state.project_data.as_ref().unwrap().titlecard_show_time.unwrap() 
+      - song_position.as_secs_f32() 
+      - curr_pre_delay_time).clamp(0.0, 1.0);
   }
 
   let titlecard_stage_sprite_color = Color::srgba(1.0, 1.0, 1.0, titlecard_stage_sprite_alpha);

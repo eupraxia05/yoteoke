@@ -29,6 +29,7 @@ use crate::editor::EditorPlugin;
 mod crash_handling;
 
 mod timeline;
+use timeline::TimelinePlugin;
 
 use bevy_tokio_tasks::TokioTasksPlugin;
 
@@ -46,16 +47,25 @@ fn main() {
         synchronous_pipeline_compilation: true,
         ..default()
       })
+      .set(WindowPlugin {
+        close_when_requested: false,
+        ..default()
+      })
     )
     .add_plugins(export_plugin)
     .add_plugins(EguiPlugin)
     .add_plugins(TokioTasksPlugin::default())
-    .add_plugins(project::configure_file_dialog_plugin(FileDialogPlugin::new()))
+    .add_plugins(
+      export::configure_file_dialog_plugin(
+        project::configure_file_dialog_plugin(FileDialogPlugin::new())
+      )
+    )
     .add_plugins(EditorPlugin)
     .add_plugins(ProjectPlugin)
     .add_plugins(AudioPlugin)
     .add_plugins(LyricsPlugin)
-    .add_plugins(StagePlugin);
+    .add_plugins(StagePlugin)
+    .add_plugins(TimelinePlugin);
 
 
   sub_viewport::build(&mut app);

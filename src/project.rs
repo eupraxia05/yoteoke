@@ -10,10 +10,10 @@ use image::ImageReader;
 use bevy::asset::RenderAssetUsages;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use bevy_egui::egui::load::SizedTexture;
+use bevy_file_dialog::prelude::*;
 
 use crate::editor::EditorState;
 use crate::stage::TitlecardUpdatedEvent;
-use crate::export::ExportDialog;
 
 pub struct ProjectPlugin;
 
@@ -30,6 +30,7 @@ impl Plugin for ProjectPlugin {
     app.add_event::<NewProjectDialogSubmittedEvent>();
     app.add_event::<SaveProjectRequestedEvent>();
     app.add_event::<SaveAsRequestedEvent>();
+    app.add_event::<ProjectSavedEvent>();
   }
 }
 
@@ -157,7 +158,10 @@ fn handle_new_project_save_file_dialog(
   }
 }
 
-fn handle_save_project_requested_event(mut events: EventReader<SaveProjectRequestedEvent>, editor_state: NonSend<EditorState>) {
+fn handle_save_project_requested_event(mut events: EventReader<SaveProjectRequestedEvent>, 
+  mut editor_state: NonSendMut<EditorState>,
+  mut project_saved_events: EventWriter<ProjectSavedEvent>
+) {
   for _ in events.read() {
     let mut vec = Vec::new();
     if let Some(project_data) = &editor_state.project_data {
@@ -173,10 +177,15 @@ fn handle_save_project_requested_event(mut events: EventReader<SaveProjectReques
       },
       Ok(_) => {
         println!("Project saved to {:?}", editor_state.project_file_path);
+        editor_state.needs_save_before_exit = false;
+        project_saved_events.send_default();
       }
     }
   }
 }
+
+#[derive(Event, Default)]
+pub struct ProjectSavedEvent;
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct ProjectData {
@@ -188,7 +197,8 @@ pub struct ProjectData {
   pub unsung_color: Option<Color>,
   pub sung_color: Option<Color>,
   pub thumbnail_path: Option<PathBuf>,
-  pub titlecard_show_time: Option<f32>
+  pub titlecard_show_time: Option<f32>,
+  pub song_delay_time: Option<f32>,
 }
 
 impl Default for ProjectData {
@@ -202,7 +212,8 @@ impl Default for ProjectData {
       sung_color: Some(Color::WHITE),
       unsung_color: Some(Color::srgb(0.5, 0.5, 0.5)),
       thumbnail_path: None,
-      titlecard_show_time: Some(10.)
+      titlecard_show_time: Some(10.),
+      song_delay_time: Some(0.)
     }
   }
 }
@@ -240,8 +251,13 @@ fn handle_open_project_dialog(
       if data.titlecard_show_time.is_none() {
         data.titlecard_show_time = Some(10.);
       }
+      if data.song_delay_time.is_none() {
+        data.song_delay_time = Some(10.);
+      }
       editor_state.project_data = Some(data);
       editor_state.lyrics_dirty = true;
+      editor_state.is_paused = true;
+      editor_state.is_in_pre_delay = true;
     } else {
         println!("couldn't deserialize file");
     }
@@ -288,7 +304,7 @@ fn load_titlecard_image(titlecard_path: &PathBuf, images: &mut Assets<Image>,
     }, 
     TextureDimension::D2,
     converted_img.into_vec(),
-    TextureFormat::Rgba8Unorm,
+    TextureFormat::Rgba8UnormSrgb,
     RenderAssetUsages::RENDER_WORLD | RenderAssetUsages::MAIN_WORLD);
   let image_handle = images.add(image);
   let egui_texture_id = egui_user_textures.add_image(image_handle.clone());
@@ -322,7 +338,8 @@ pub fn file_ops_menu_ui(mut ui: InMut<egui::Ui>,
   editor_state: NonSend<EditorState>,
   mut new_project_event_writer: EventWriter<NewProjectRequestedEvent>,
   mut save_requested_event_writer: EventWriter<SaveProjectRequestedEvent>,
-  mut commands: Commands) {
+  mut commands: Commands
+) {
   if ui.button("New...").clicked() {
     new_project_event_writer.send_default();
   }
@@ -342,14 +359,13 @@ pub fn file_ops_menu_ui(mut ui: InMut<egui::Ui>,
 
 pub fn project_menu_ui(mut ui: InMut<egui::Ui>,
   mut editor_state: NonSendMut<EditorState>,
-  mut export_dialog: ResMut<ExportDialog>
+  mut commands: Commands
 ) {
   if ui.button("Project Settings...").clicked() {
     editor_state.project_settings_dialog.open();
   }
   if ui.button("Export...").clicked() {
-    info!("export button clicked");
-    export_dialog.open();
+    commands.dialog().save_file::<crate::export::ExportFilePathDialog>(Vec::new());
   }
 }
 
@@ -366,25 +382,30 @@ impl ProjectSettingsDialog {
     self.is_open = true;
   }
 
-  fn color_property(ui: &mut egui::Ui, label_text: &str, color: &mut Option<Color>) {
+  fn color_property(ui: &mut egui::Ui, label_text: &str, color: &mut Option<Color>) -> bool {
+    let mut changed = false;
     ui.horizontal(|ui| {
       ui.label(label_text);
       let c = color.unwrap_or_default().to_linear();
       let mut color_temp = [c.red, c.green, c.blue];
-      ui.color_edit_button_rgb(&mut color_temp);
+      if ui.color_edit_button_rgb(&mut color_temp).changed() {
+        changed = true;
+      }
       *color = Some(Color::linear_rgb(color_temp[0], color_temp[1], color_temp[2]));
     });
+    changed
   }
 
   pub fn show(&mut self, ctx: &egui::Context, 
     project_data: &mut ProjectData, commands: &mut Commands,
-    thumbnail_egui_tex_id: Option<egui::TextureId>) 
+    thumbnail_egui_tex_id: Option<egui::TextureId>) -> bool 
   {
+    let mut changed = false;
     if self.is_open {
       egui::Window::new("Project Settings").show(ctx, |ui| {
-        Self::color_property(ui, "Background color", &mut project_data.background_color);
-        Self::color_property(ui, "Text color (unsung)", &mut project_data.unsung_color);
-        Self::color_property(ui, "Text color (sung)", &mut project_data.sung_color);
+        changed |= Self::color_property(ui, "Background color", &mut project_data.background_color);
+        changed |= Self::color_property(ui, "Text color (unsung)", &mut project_data.unsung_color);
+        changed |= Self::color_property(ui, "Text color (sung)", &mut project_data.sung_color);
         ui.horizontal(|ui| {
           ui.label("Thumbnail");
           if ui.button("Set").clicked() {
@@ -397,10 +418,20 @@ impl ProjectSettingsDialog {
 
         ui.horizontal(|ui| {
           ui.label("Titlecard show time");
-          ui.add(egui::DragValue::new(project_data.titlecard_show_time.as_mut().unwrap()).speed(0.1));
+          if ui.add(egui::DragValue::new(project_data.titlecard_show_time.as_mut().unwrap()).speed(0.1)).changed() {
+            changed = true;
+          }
+        });
+
+        ui.horizontal(|ui| {
+          ui.label("Song delay time");
+          if ui.add(egui::DragValue::new(project_data.song_delay_time.as_mut().unwrap()).speed(0.1)).changed() {
+            changed = true;
+          }
         });
       });
     }
+    changed
   }
 }
 

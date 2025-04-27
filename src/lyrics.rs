@@ -205,13 +205,13 @@ pub fn lyrics_edit_ui(mut ui: InMut<egui::Ui>, mut editor_state: NonSendMut<Edit
   let mut text_edit_changed = false;
   let mut cursor_pos = None;
   let mut insert_desired = false;
-  let curr_time = if let Some(music_handle) = &editor_state.music_handle {
-    Duration::from_secs_f64(music_handle.position())
-  } else {
-    Duration::default()
-  };
+  let curr_time = editor_state.playhead_position();
+  let needs_save_before_exit = editor_state.needs_save_before_exit;
   if let Some(project_data) = &mut editor_state.project_data {
-    let title_str = format!("{} - {}", project_data.artist, project_data.title);
+    let mut title_str = format!("{} - {}", project_data.artist, project_data.title);
+    if needs_save_before_exit {
+      title_str += "*";
+    }
     ui.label(title_str);
     if ui.button("Insert").clicked() {
       insert_desired = true;
@@ -246,5 +246,6 @@ pub fn lyrics_edit_ui(mut ui: InMut<egui::Ui>, mut editor_state: NonSendMut<Edit
   if text_edit_changed {
     info!("lyrics marked dirty");
     editor_state.lyrics_dirty = true;
+    editor_state.needs_save_before_exit = true;
   }
 }

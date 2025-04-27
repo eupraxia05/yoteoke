@@ -7,13 +7,15 @@ use kira::sound::FromFileError;
 use bevy_egui::egui;
 use bevy::ecs::system::SystemState;
 use bevy_egui::EguiContexts;
+use bevy::window::WindowCloseRequested;
 
 use crate::export::ExportInitiatedEvent;
+use crate::project::ProjectSavedEvent;
+use crate::project::SaveProjectRequestedEvent;
 use crate::NewProjectDialog;
 use crate::ParsedLyrics;
 use crate::project::ProjectSettingsDialog;
 use crate::project::ProjectData;
-use crate::export::ExportDialog;
 
 pub struct EditorPlugin;
 
@@ -21,6 +23,10 @@ impl Plugin for EditorPlugin {
   fn build(&self, app: &mut App) {
     app.insert_non_send_resource(EditorState::default());
     app.add_systems(Update, ui);
+    app.add_systems(Update, handle_window_close_requested);
+    app.insert_resource(ExitConfirmDialog::default());
+    app.add_systems(Update, exit_confirm_dialog_ui);
+    app.add_systems(Update, finish_save_and_exit);
   }
 }
 
@@ -37,6 +43,10 @@ pub struct EditorState {
   pub project_settings_dialog: ProjectSettingsDialog,
   pub thumbnail_image: Option<Handle<Image>>,
   pub thumbnail_egui_tex_id: Option<egui::TextureId>,
+  pub needs_save_before_exit: bool,
+  pub is_in_pre_delay: bool,
+  pub curr_pre_delay_time: f64,
+  pub is_paused: bool,
 }
 
 impl EditorState {
@@ -107,7 +117,7 @@ fn menu_ui(ui: InMut<egui::Ui>, world: &mut World)
   });
 }
 
-fn file_dialog_ui(mut contexts: EguiContexts, mut editor_state: NonSendMut<EditorState>, mut commands: Commands, mut export_dialog: ResMut<ExportDialog>,
+fn file_dialog_ui(mut contexts: EguiContexts, mut editor_state: NonSendMut<EditorState>, mut commands: Commands,
   mut export_event_writer: EventWriter<ExportInitiatedEvent>
 ) {
   if let Some(new_project_dialog) = &mut editor_state.new_file_dialog {
@@ -120,11 +130,65 @@ fn file_dialog_ui(mut contexts: EguiContexts, mut editor_state: NonSendMut<Edito
     project_data_temp = project_data.clone();
   }
   let thumbnail_egui_tex_id = editor_state.thumbnail_egui_tex_id.clone();
-  editor_state.project_settings_dialog.show(contexts.ctx_mut(), &mut project_data_temp, &mut commands, thumbnail_egui_tex_id);
+  let project_settings_changed = editor_state.project_settings_dialog.show(contexts.ctx_mut(), &mut project_data_temp, &mut commands, thumbnail_egui_tex_id);
+  editor_state.needs_save_before_exit |= project_settings_changed;
 
   if let Some(project_data) = &mut editor_state.project_data {
     *project_data = project_data_temp;
   }
+}
 
-  export_dialog.show(contexts.ctx_mut(), &mut export_event_writer);
+fn handle_window_close_requested(mut events: EventReader<WindowCloseRequested>,
+  mut exit_confirm_dialog: ResMut<ExitConfirmDialog>,
+  editor_state: NonSend<EditorState>,
+  mut exit_events: EventWriter<AppExit>,
+) {
+  for ev in events.read() {
+    if editor_state.needs_save_before_exit {
+      exit_confirm_dialog.is_active = true;
+    } else {
+      exit_events.send(AppExit::Success);
+    }
+  } 
+}
+
+#[derive(Resource, Default)]
+struct ExitConfirmDialog {
+  is_active: bool,
+  is_saving_before_exit: bool,
+}
+
+fn exit_confirm_dialog_ui(mut exit_confirm_dialog: ResMut<ExitConfirmDialog>,
+  mut egui_contexts: EguiContexts,
+  mut exit_events: EventWriter<AppExit>,
+  mut save_events: EventWriter<SaveProjectRequestedEvent>
+) {
+  if exit_confirm_dialog.is_active {
+    egui::Window::new("Exit?").show(egui_contexts.ctx_mut(), |ui| {
+      ui.label("You have unsaved changes. Are you sure you want to exit?");
+      ui.horizontal(|ui| {
+        if ui.button("Cancel").clicked() {
+          exit_confirm_dialog.is_active = false;
+        }
+        if ui.button("Save and exit").clicked() {
+          save_events.send_default();
+          exit_confirm_dialog.is_saving_before_exit = true;
+        }
+        if ui.button("Exit without saving").clicked() {
+          exit_events.send(AppExit::Success);
+        }
+      });
+    });
+  }
+}
+
+fn finish_save_and_exit(exit_confirm_dialog: Res<ExitConfirmDialog>, 
+  mut exit_events: EventWriter<AppExit>,
+  project_saved_events: EventReader<ProjectSavedEvent>
+) {
+  if exit_confirm_dialog.is_saving_before_exit {
+    if !project_saved_events.is_empty() {
+      exit_events.send(AppExit::Success);
+    }
+  }
 }

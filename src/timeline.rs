@@ -7,7 +7,15 @@ use std::ops::RangeInclusive;
 
 use bevy_egui::egui;
 
-use crate::editor::EditorState;
+use crate::editor::{self, EditorState};
+
+pub struct TimelinePlugin;
+
+impl Plugin for TimelinePlugin {
+  fn build(&self, app: &mut App) {
+    app.add_systems(Update, handle_pre_delay);
+  }
+}
 
 pub fn timeline_ui(mut ui: InMut<egui::Ui>, mut editor_state: NonSendMut<EditorState>) {
   egui::TopBottomPanel::new(egui::panel::TopBottomSide::Top, "timeline_header").exact_height(32.).show_inside(&mut ui, |ui| {
@@ -19,11 +27,30 @@ pub fn timeline_ui(mut ui: InMut<egui::Ui>, mut editor_state: NonSendMut<EditorS
   });
 }
 
+fn seek_playhead_to(mut editor_state: Mut<EditorState>, time: f64) {
+  if let Some(project_data) = &editor_state.project_data {
+    let delay_time = project_data.song_delay_time.unwrap() as f64;
+    let t = time - delay_time;
+    if t < 0. {
+      info!("seek_playhead_to: entering pre delay");
+      editor_state.music_handle.as_mut().unwrap().seek_to(0.);
+      // pause the sound, we'll resume it after pre-delay
+      editor_state.music_handle.as_mut().unwrap().pause(Tween::default());
+      editor_state.is_in_pre_delay = true;
+      editor_state.curr_pre_delay_time = time;
+    } else {
+      editor_state.music_handle.as_mut().unwrap().seek_to(t);
+      editor_state.is_in_pre_delay = false;
+      editor_state.curr_pre_delay_time = delay_time;
+    }
+  }
+}
+
 pub fn play_buttons_ui(ui: &mut egui::Ui, mut editor_state: Mut<EditorState>,
   curr_time: Duration, total_time: Duration) {
   ui.horizontal(|ui| {
     if ui.button("|<-").clicked() {
-      editor_state.music_handle.as_mut().unwrap().seek_to(0.);
+      seek_playhead_to(editor_state.reborrow(), 0.);
     }
     if ui.button("<-").clicked() {
       let seek_duration = Duration::from_secs_f64(5.);
@@ -33,25 +60,31 @@ pub fn play_buttons_ui(ui: &mut egui::Ui, mut editor_state: Mut<EditorState>,
         0.
       };
       info!("Rewinding to {:?}", seek_to_time);
-      editor_state.music_handle.as_mut().unwrap().seek_to(seek_to_time);
+      seek_playhead_to(editor_state.reborrow(), seek_to_time);
     }
-    if editor_state.music_handle.as_ref().unwrap().state() == PlaybackState::Paused {
+    if editor_state.is_paused {
       if ui.button(">").clicked() {
-        editor_state.music_handle.as_mut().unwrap().resume(Tween::default());
+        if !editor_state.is_in_pre_delay {
+          editor_state.music_handle.as_mut().unwrap().resume(Tween::default());
+        }
+        editor_state.is_paused = false;
       }
     } else {
       if ui.button("||").clicked() {
-        editor_state.music_handle.as_mut().unwrap().pause(Tween::default());
+        if !editor_state.is_in_pre_delay {
+          editor_state.music_handle.as_mut().unwrap().pause(Tween::default());
+        }
+        editor_state.is_paused = true;
       }
     }
     if ui.button("->").clicked() {
-      editor_state.music_handle.as_mut().unwrap().seek_to((curr_time + Duration::from_secs_f64(5.)).min(total_time).as_secs_f64());
+      seek_playhead_to(editor_state.reborrow(), (curr_time + Duration::from_secs_f64(5.)).min(total_time).as_secs_f64());
     }
     if ui.button("->|").clicked() {
       if editor_state.music_handle.as_mut().unwrap().state() == PlaybackState::Playing {
         editor_state.music_handle.as_mut().unwrap().pause(Tween::default());
       }
-      editor_state.music_handle.as_mut().unwrap().seek_to(total_time.as_secs_f64());
+      seek_playhead_to(editor_state.reborrow(), total_time.as_secs_f64());
     }
   });
 }
@@ -60,8 +93,13 @@ pub fn timeline_header_ui(ui: &mut egui::Ui, mut editor_state: Mut<EditorState>)
   let Some(music_handle) = editor_state.music_handle.as_mut() else {
     return;
   };
-  let curr_time = Duration::from_secs_f64(music_handle.position());
-  let total_time = editor_state.duration.unwrap();
+  let pre_delay_time = if let Some(project_data) = &editor_state.project_data {
+    project_data.song_delay_time.unwrap()
+  } else {
+    0.
+  };
+  let curr_time = editor_state.playhead_position() + Duration::from_secs_f64(editor_state.curr_pre_delay_time);
+  let total_time = editor_state.duration.unwrap() + Duration::from_secs_f32(pre_delay_time);
   egui::SidePanel::new(egui::panel::Side::Left, "play_buttons").show_inside(ui, |ui| {
     crate::timeline::play_buttons_ui(ui, editor_state.reborrow(), curr_time, total_time);
   });
@@ -98,4 +136,24 @@ fn timeline_blocks_ui(ui: &mut egui::Ui, mut editor_state: Mut<EditorState>,) {
       });
     }
   });
+}
+
+fn handle_pre_delay(mut editor_state: NonSendMut<EditorState>, time: Res<Time>) {
+  let delay_time = if let Some(project_data) = &editor_state.project_data {
+    project_data.song_delay_time.unwrap() as f64
+  } else {
+    return;
+  };
+
+  if !editor_state.is_paused && editor_state.is_in_pre_delay {
+    editor_state.curr_pre_delay_time += time.delta_secs_f64();
+
+    if editor_state.curr_pre_delay_time > delay_time {
+      info!("handle_pre_delay: exiting pre delay");
+      editor_state.curr_pre_delay_time = delay_time;
+      editor_state.music_handle.as_mut().unwrap().resume(Tween::default());
+      editor_state.is_paused = false;
+      editor_state.is_in_pre_delay = false;
+    }
+  }
 }
