@@ -22,3 +22,5 @@ crash-handler = "0.6.2"
 minidump-writer = "0.8.9"
 minidumper-child = "0.2.2"
 minidump = "0.25.0"
+egui_commonmark = { version = "0.20.0", features = ["macros"] }
+bevy-inspector-egui = "0.30.0"

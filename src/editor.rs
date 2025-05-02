@@ -27,6 +27,7 @@ impl Plugin for EditorPlugin {
     app.insert_resource(ExitConfirmDialog::default());
     app.add_systems(Update, exit_confirm_dialog_ui);
     app.add_systems(Update, finish_save_and_exit);
+    app.insert_resource(TitlecardState::default());
   }
 }
 
@@ -40,13 +41,16 @@ pub struct EditorState {
   pub duration: Option<Duration>,
   pub parsed_lyrics: Option<ParsedLyrics>,
   pub lyrics_dirty: bool,
-  pub project_settings_dialog: ProjectSettingsDialog,
-  pub thumbnail_image: Option<Handle<Image>>,
-  pub thumbnail_egui_tex_id: Option<egui::TextureId>,
   pub needs_save_before_exit: bool,
   pub is_in_pre_delay: bool,
   pub curr_pre_delay_time: f64,
   pub is_paused: bool,
+}
+
+#[derive(Default, Resource)]
+pub struct TitlecardState {
+  pub titlecard_image: Option<Handle<Image>>,
+  pub titlecard_egui_tex_id: Option<egui::TextureId>,
 }
 
 impl EditorState {
@@ -95,6 +99,9 @@ fn ui(world: &mut World) {
   });
 
   world.run_system_cached(file_dialog_ui).expect("Couldn't run file_dialog_ui system!");
+  world.run_system_cached(crate::help::help_dialog_ui).expect("Couldn't run help_dialog_ui system!");
+  world.run_system_cached(crate::help::about_dialog_ui).expect("Couldn't run about_dialog_ui system!");
+  world.run_system_cached(crate::project::project_settings_dialog_ui).expect("Couldn't run project_settings_dialog_ui system!");
 }
 
 fn menu_ui(ui: InMut<egui::Ui>, world: &mut World) 
@@ -105,6 +112,14 @@ fn menu_ui(ui: InMut<egui::Ui>, world: &mut World)
     });
     ui.menu_button("Project", |ui| {
       world.run_system_cached_with(crate::project::project_menu_ui, ui).expect("Couldn't run project_menu_ui system!");
+    });
+    ui.menu_button("Help", |ui| {
+      if ui.button("Help").clicked() {
+        world.send_event_default::<crate::help::HelpDialogOpenRequested>();
+      }
+      if ui.button("About").clicked() {
+        world.send_event_default::<crate::help::AboutDialogOpenRequested>();
+      }
     });
 
     ui.menu_button("Debug", |ui| {
@@ -117,8 +132,12 @@ fn menu_ui(ui: InMut<egui::Ui>, world: &mut World)
   });
 }
 
-fn file_dialog_ui(mut contexts: EguiContexts, mut editor_state: NonSendMut<EditorState>, mut commands: Commands,
-  mut export_event_writer: EventWriter<ExportInitiatedEvent>
+fn file_dialog_ui(mut contexts: EguiContexts, 
+  mut editor_state: NonSendMut<EditorState>, 
+  mut commands: Commands,
+  mut export_event_writer: EventWriter<ExportInitiatedEvent>,
+  type_registry: Res<AppTypeRegistry>,
+  titlecard_state: Res<TitlecardState>
 ) {
   if let Some(new_project_dialog) = &mut editor_state.new_file_dialog {
     new_project_dialog.show(contexts.ctx_mut(), &mut commands);
@@ -129,9 +148,6 @@ fn file_dialog_ui(mut contexts: EguiContexts, mut editor_state: NonSendMut<Edito
   if let Some(project_data) = &mut editor_state.project_data {
     project_data_temp = project_data.clone();
   }
-  let thumbnail_egui_tex_id = editor_state.thumbnail_egui_tex_id.clone();
-  let project_settings_changed = editor_state.project_settings_dialog.show(contexts.ctx_mut(), &mut project_data_temp, &mut commands, thumbnail_egui_tex_id);
-  editor_state.needs_save_before_exit |= project_settings_changed;
 
   if let Some(project_data) = &mut editor_state.project_data {
     *project_data = project_data_temp;

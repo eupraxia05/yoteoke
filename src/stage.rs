@@ -49,6 +49,7 @@ fn update_preview(editor_state: NonSend<EditorState>,
   mut commands: Commands,
   mut titlecard_stage_sprite_query: Query<&mut Sprite, With<TitlecardStageSprite>>,
   mut camera_tex_query: Query<&mut SubViewport>,
+  titlecard_state: Res<crate::editor::TitlecardState>,
 )
 {
   let mut pre_delay_time = 0.;
@@ -130,7 +131,7 @@ fn update_preview(editor_state: NonSend<EditorState>,
   }
 
   let mut titlecard_stage_sprite_alpha = 0.0;
-  if editor_state.thumbnail_image.is_some() {
+  if titlecard_state.titlecard_image.is_some() {
     let curr_pre_delay_time = if export_state.is_exporting {
       (export_state.frame_idx() as f32 / 12.).clamp(0., pre_delay_time)
     } else {
@@ -154,14 +155,15 @@ pub struct TitlecardUpdatedEvent;
 
 fn handle_titlecard_updated(mut events: EventReader<TitlecardUpdatedEvent>, 
   mut titlecard_stage_sprite_query: Query<&mut Sprite, With<TitlecardStageSprite>>,
-  editor_state: NonSend<EditorState>
+  editor_state: NonSend<EditorState>,
+  titlecard_state: Res<crate::editor::TitlecardState>
 ) {
   for _ in events.read() {
     let mut sprite = titlecard_stage_sprite_query.single_mut();
     sprite.image = 
-      if editor_state.thumbnail_image.is_some() {
+      if titlecard_state.titlecard_image.is_some() {
         sprite.color = Color::WHITE;
-        editor_state.thumbnail_image.as_ref().unwrap().clone_weak()
+        titlecard_state.titlecard_image.as_ref().unwrap().clone_weak()
       } else {
         sprite.color = Color::NONE;
         Handle::default()

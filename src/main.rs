@@ -2,6 +2,7 @@ use bevy::prelude::*;
 use bevy::render::RenderPlugin;
 use bevy_egui::EguiPlugin;
 use bevy_image_export::ImageExportPlugin;
+use bevy_inspector_egui::DefaultInspectorConfigPlugin;
 use lyrics::LyricsPlugin;
 use project::ProjectPlugin;
 use bevy_file_dialog::prelude::*;
@@ -31,6 +32,9 @@ mod crash_handling;
 mod timeline;
 use timeline::TimelinePlugin;
 
+mod help;
+use help::HelpPlugin;
+
 use bevy_tokio_tasks::TokioTasksPlugin;
 
 fn main() {
@@ -49,6 +53,10 @@ fn main() {
       })
       .set(WindowPlugin {
         close_when_requested: false,
+        primary_window: Some(Window {
+          title: "YoteOke Lyric Editor".into(),
+          ..default()
+        }),
         ..default()
       })
     )
@@ -65,7 +73,9 @@ fn main() {
     .add_plugins(AudioPlugin)
     .add_plugins(LyricsPlugin)
     .add_plugins(StagePlugin)
-    .add_plugins(TimelinePlugin);
+    .add_plugins(TimelinePlugin)
+    .add_plugins(HelpPlugin)
+    .add_plugins(DefaultInspectorConfigPlugin);
 
 
   sub_viewport::build(&mut app);

@@ -1,5 +1,9 @@
+use bevy::ecs::system::SystemState;
 use bevy::prelude::*;
-use bevy_egui::egui;
+use bevy::reflect::TypeRegistry;
+use bevy_egui::{egui, EguiContexts};
+use bevy_inspector_egui::inspector_egui_impls::{InspectorEguiImpl, InspectorPrimitive};
+use bevy_inspector_egui::reflect_inspector::{Context, InspectorUi};
 use std::path::PathBuf;
 use bevy_file_dialog::prelude::*;
 use std::fs::File;
@@ -8,9 +12,10 @@ use serde::{Serialize, Deserialize};
 use bevy_egui::EguiUserTextures;
 use image::ImageReader;
 use bevy::asset::RenderAssetUsages;
-use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
+use bevy::render::render_resource::{AsBindGroupShaderType, Extent3d, TextureDimension, TextureFormat};
 use bevy_egui::egui::load::SizedTexture;
 use bevy_file_dialog::prelude::*;
+use bevy::ecs::world::CommandQueue;
 
 use crate::editor::EditorState;
 use crate::stage::TitlecardUpdatedEvent;
@@ -31,6 +36,9 @@ impl Plugin for ProjectPlugin {
     app.add_event::<SaveProjectRequestedEvent>();
     app.add_event::<SaveAsRequestedEvent>();
     app.add_event::<ProjectSavedEvent>();
+    app.register_type::<TitlecardPath>();
+    app.register_type_data::<TitlecardPath, InspectorEguiImpl>();
+    app.insert_resource(ProjectSettingsDialog::default());
   }
 }
 
@@ -224,11 +232,11 @@ pub struct SaveAsDialog;
 
 pub struct LoadDialog;
 
-pub struct ThumbnailFilePathDialog;
+pub struct TitlecardFilePathDialog;
 
 pub fn configure_file_dialog_plugin(plugin: FileDialogPlugin) -> FileDialogPlugin {
   plugin.with_load_file::<crate::project::LoadDialog>()
-  .with_pick_file::<crate::project::ThumbnailFilePathDialog>()
+  .with_pick_file::<crate::project::TitlecardFilePathDialog>()
   .with_pick_file::<crate::project::NewProjectSongFileDialog>()
   .with_save_file::<crate::project::NewProjectSaveFileDialog>()
   .with_load_file::<crate::project::OpenProjectDialog>()
@@ -240,7 +248,8 @@ fn handle_open_project_dialog(
   mut editor_state: NonSendMut<EditorState>,
   mut titlecard_updated_events: EventWriter<TitlecardUpdatedEvent>,
   mut images: ResMut<Assets<Image>>,
-  mut egui_user_textures: ResMut<EguiUserTextures>
+  mut egui_user_textures: ResMut<EguiUserTextures>,
+  mut titlecard_state: ResMut<crate::editor::TitlecardState>,
 ) {
   for ev in events.read() { 
     editor_state.project_file_path = ev.path.clone();
@@ -268,8 +277,8 @@ fn handle_open_project_dialog(
         return;
       };
   
-      editor_state.thumbnail_image = Some(image_handle);
-      editor_state.thumbnail_egui_tex_id = Some(egui_texture_id);
+      titlecard_state.titlecard_image = Some(image_handle);
+      titlecard_state.titlecard_egui_tex_id = Some(egui_texture_id);
       if let Some(project_data) = editor_state.project_data.as_mut() {
         project_data.thumbnail_path = Some(ev.path.clone());
       }  
@@ -313,11 +322,12 @@ fn load_titlecard_image(titlecard_path: &PathBuf, images: &mut Assets<Image>,
 }
 
 fn handle_thumbnail_file_path_dialog(
-  mut events: EventReader<DialogFilePicked<ThumbnailFilePathDialog>>,
+  mut events: EventReader<DialogFilePicked<TitlecardFilePathDialog>>,
   mut egui_user_textures: ResMut<EguiUserTextures>,
   mut editor_state: NonSendMut<EditorState>,
   mut images: ResMut<Assets<Image>>,
-  mut titlecard_updated_events: EventWriter<TitlecardUpdatedEvent>
+  mut titlecard_updated_events: EventWriter<TitlecardUpdatedEvent>,
+  mut titlecard_state: ResMut<crate::editor::TitlecardState>
 ) {
   for ev in events.read() {
     let load_result = load_titlecard_image(&ev.path, images.as_mut(), egui_user_textures.as_mut());
@@ -325,8 +335,8 @@ fn handle_thumbnail_file_path_dialog(
       return;
     };
 
-    editor_state.thumbnail_image = Some(image_handle);
-    editor_state.thumbnail_egui_tex_id = Some(egui_texture_id);
+    titlecard_state.titlecard_image = Some(image_handle);
+    titlecard_state.titlecard_egui_tex_id = Some(egui_texture_id);
     if let Some(project_data) = editor_state.project_data.as_mut() {
       project_data.thumbnail_path = Some(ev.path.clone());
     }
@@ -358,11 +368,11 @@ pub fn file_ops_menu_ui(mut ui: InMut<egui::Ui>,
 }
 
 pub fn project_menu_ui(mut ui: InMut<egui::Ui>,
-  mut editor_state: NonSendMut<EditorState>,
+  mut project_settings_dialog: ResMut<ProjectSettingsDialog>,
   mut commands: Commands
 ) {
   if ui.button("Project Settings...").clicked() {
-    editor_state.project_settings_dialog.open();
+    project_settings_dialog.open();
   }
   if ui.button("Export...").clicked() {
     commands.dialog().save_file::<crate::export::ExportFilePathDialog>(Vec::new());
@@ -372,7 +382,7 @@ pub fn project_menu_ui(mut ui: InMut<egui::Ui>,
 #[derive(Event, Default)]
 pub struct SaveProjectRequestedEvent;
 
-#[derive(Default)]
+#[derive(Default, Resource)]
 pub struct ProjectSettingsDialog {
   is_open: bool,
 }
@@ -382,7 +392,7 @@ impl ProjectSettingsDialog {
     self.is_open = true;
   }
 
-  fn color_property(ui: &mut egui::Ui, label_text: &str, color: &mut Option<Color>) -> bool {
+  /*fn color_property(ui: &mut egui::Ui, label_text: &str, color: &mut Option<Color>) -> bool {
     let mut changed = false;
     ui.horizontal(|ui| {
       ui.label(label_text);
@@ -394,16 +404,24 @@ impl ProjectSettingsDialog {
       *color = Some(Color::linear_rgb(color_temp[0], color_temp[1], color_temp[2]));
     });
     changed
-  }
+  }*/
 
-  pub fn show(&mut self, ctx: &egui::Context, 
-    project_data: &mut ProjectData, commands: &mut Commands,
-    thumbnail_egui_tex_id: Option<egui::TextureId>) -> bool 
-  {
+  /*pub fn show(&mut self, world: &mut World) -> bool {
     let mut changed = false;
     if self.is_open {
       egui::Window::new("Project Settings").show(ctx, |ui| {
-        changed |= Self::color_property(ui, "Background color", &mut project_data.background_color);
+        let mut properties = ProjectSettingsProperties::from_project_data(project_data);
+        let mut command_queue = CommandQueue::default();
+        let mut inspector_ui_context = Context {
+          world: None,
+          queue: Some(&mut command_queue)
+        };
+        let type_registry_read = type_registry.read();
+        let mut inspector_ui = InspectorUi::new(&type_registry_read, 
+          &mut inspector_ui_context, None, None, None);
+        changed |= inspector_ui.ui_for_reflect(&mut properties, ui,);
+        properties.update_project_data(project_data);
+        /*changed |= Self::color_property(ui, "Background color", &mut project_data.background_color);
         changed |= Self::color_property(ui, "Text color (unsung)", &mut project_data.unsung_color);
         changed |= Self::color_property(ui, "Text color (sung)", &mut project_data.sung_color);
         ui.horizontal(|ui| {
@@ -428,12 +446,111 @@ impl ProjectSettingsDialog {
           if ui.add(egui::DragValue::new(project_data.song_delay_time.as_mut().unwrap()).speed(0.1)).changed() {
             changed = true;
           }
-        });
+        });*/
       });
     }
     changed
+  }*/
+}
+
+pub fn project_settings_dialog_ui(world: &mut World) {
+  let ctx;
+  let is_open;
+  let mut properties;
+  {
+    let mut system_state: SystemState<(
+      EguiContexts, Res<ProjectSettingsDialog>, NonSend<EditorState>)> 
+      = SystemState::new(world);
+    let (mut egui_contexts, project_settings_dialog, editor_state) = system_state.get_mut(world);
+    ctx = egui_contexts.ctx_mut().clone();
+    is_open = project_settings_dialog.is_open;
+    if let Some(project_data) = &editor_state.project_data {
+      properties = ProjectSettingsProperties::from_project_data(project_data)
+    } else {
+      return;
+    }
+  }
+  
+  if is_open {
+    egui::Window::new("Project Settings").show(&ctx, |ui| {
+      let changed = bevy_inspector_egui::bevy_inspector::ui_for_value(&mut properties, ui, world);
+      if changed {
+        let mut editor_state = world.get_non_send_resource_mut::<EditorState>().unwrap();
+        properties.update_project_data(editor_state.project_data.as_mut().unwrap());
+        editor_state.needs_save_before_exit = true;
+      }
+    });
   }
 }
 
 #[derive(Default, Event)]
 struct SaveAsRequestedEvent;
+
+#[derive(Reflect)]
+struct ProjectSettingsProperties {
+  pub background_color: Color,
+  pub unsung_color: Color,
+  pub sung_color: Color,
+  pub titlecard_show_time: f32,
+  pub song_delay_time: f32,
+  pub titlecard_path: TitlecardPath
+}
+
+impl ProjectSettingsProperties {
+  fn from_project_data(project_data: &ProjectData) -> Self {
+    Self {
+      background_color: project_data.background_color.unwrap_or(Color::default()),
+      unsung_color: project_data.unsung_color.unwrap_or(Color::default()),
+      sung_color: project_data.sung_color.unwrap_or(Color::default()),
+      titlecard_show_time: project_data.titlecard_show_time.unwrap_or_default(),
+      song_delay_time: project_data.song_delay_time.unwrap_or_default(),
+      titlecard_path: TitlecardPath(project_data.thumbnail_path.clone())
+    }
+  }
+
+  fn update_project_data(&self, project_data: &mut ProjectData) {
+    project_data.background_color = Some(self.background_color);
+    project_data.unsung_color = Some(self.unsung_color);
+    project_data.sung_color = Some(self.sung_color);
+    project_data.titlecard_show_time = Some(self.titlecard_show_time);
+    project_data.song_delay_time = Some(self.song_delay_time);
+    project_data.thumbnail_path = self.titlecard_path.0.clone();
+  }
+}
+
+#[derive(Reflect, Clone)]
+struct TitlecardPath(Option<PathBuf>);
+
+impl InspectorPrimitive for TitlecardPath {
+  fn ui(
+    &mut self,
+    ui: &mut egui::Ui,
+    options: &dyn std::any::Any,
+    id: egui::Id,
+    mut env: bevy_inspector_egui::reflect_inspector::InspectorUi<'_, '_>,
+  ) -> bool {
+    self.ui_readonly(ui, options, id, env.reborrow());
+
+    if ui.button("Set").clicked() {
+      env.context.queue.as_mut().unwrap().push(|world: &mut World| {
+        world.commands().dialog().pick_file_path::<TitlecardFilePathDialog>();
+      });
+    }
+    false
+  }
+
+  fn ui_readonly(
+    &self,
+    ui: &mut egui::Ui,
+    options: &dyn std::any::Any,
+    id: egui::Id,
+    env: bevy_inspector_egui::reflect_inspector::InspectorUi<'_, '_>,
+  ) {
+    let tex_id = env.context.world.as_mut().unwrap()
+      .get_resource_mut::<crate::editor::TitlecardState>()
+      .unwrap().titlecard_egui_tex_id;
+    if let Some(tex_id) = tex_id {
+      ui.image(egui::ImageSource::Texture(SizedTexture::new(tex_id, [128., 72.])));
+    }
+  }
+}
