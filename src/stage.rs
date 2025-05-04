@@ -50,6 +50,7 @@ fn update_preview(editor_state: NonSend<EditorState>,
   mut titlecard_stage_sprite_query: Query<&mut Sprite, With<TitlecardStageSprite>>,
   mut camera_tex_query: Query<&mut SubViewport>,
   titlecard_state: Res<crate::editor::TitlecardState>,
+  mut audio_state: NonSendMut<crate::editor::AudioState>
 )
 {
   let mut pre_delay_time = 0.;
@@ -61,7 +62,7 @@ fn update_preview(editor_state: NonSend<EditorState>,
   let song_position = if export_state.is_exporting() {
     Duration::from_secs_f64((export_state.frame_idx() as f64 / 12. - pre_delay_time as f64).max(0.))
   } else {
-    editor_state.playhead_position()
+    audio_state.playhead_position()
   };
 
   let mut text: String = "".into();

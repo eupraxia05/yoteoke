@@ -391,66 +391,6 @@ impl ProjectSettingsDialog {
   pub fn open(&mut self) {
     self.is_open = true;
   }
-
-  /*fn color_property(ui: &mut egui::Ui, label_text: &str, color: &mut Option<Color>) -> bool {
-    let mut changed = false;
-    ui.horizontal(|ui| {
-      ui.label(label_text);
-      let c = color.unwrap_or_default().to_linear();
-      let mut color_temp = [c.red, c.green, c.blue];
-      if ui.color_edit_button_rgb(&mut color_temp).changed() {
-        changed = true;
-      }
-      *color = Some(Color::linear_rgb(color_temp[0], color_temp[1], color_temp[2]));
-    });
-    changed
-  }*/
-
-  /*pub fn show(&mut self, world: &mut World) -> bool {
-    let mut changed = false;
-    if self.is_open {
-      egui::Window::new("Project Settings").show(ctx, |ui| {
-        let mut properties = ProjectSettingsProperties::from_project_data(project_data);
-        let mut command_queue = CommandQueue::default();
-        let mut inspector_ui_context = Context {
-          world: None,
-          queue: Some(&mut command_queue)
-        };
-        let type_registry_read = type_registry.read();
-        let mut inspector_ui = InspectorUi::new(&type_registry_read, 
-          &mut inspector_ui_context, None, None, None);
-        changed |= inspector_ui.ui_for_reflect(&mut properties, ui,);
-        properties.update_project_data(project_data);
-        /*changed |= Self::color_property(ui, "Background color", &mut project_data.background_color);
-        changed |= Self::color_property(ui, "Text color (unsung)", &mut project_data.unsung_color);
-        changed |= Self::color_property(ui, "Text color (sung)", &mut project_data.sung_color);
-        ui.horizontal(|ui| {
-          ui.label("Thumbnail");
-          if ui.button("Set").clicked() {
-            commands.dialog().set_directory("/").set_title("Select Thumbnail Image").pick_file_path::<ThumbnailFilePathDialog>();
-          }
-          if let Some(img) = thumbnail_egui_tex_id {
-            ui.image(egui::ImageSource::Texture(SizedTexture::new(img, [128., 72.])));
-          }
-        });
-
-        ui.horizontal(|ui| {
-          ui.label("Titlecard show time");
-          if ui.add(egui::DragValue::new(project_data.titlecard_show_time.as_mut().unwrap()).speed(0.1)).changed() {
-            changed = true;
-          }
-        });
-
-        ui.horizontal(|ui| {
-          ui.label("Song delay time");
-          if ui.add(egui::DragValue::new(project_data.song_delay_time.as_mut().unwrap()).speed(0.1)).changed() {
-            changed = true;
-          }
-        });*/
-      });
-    }
-    changed
-  }*/
 }
 
 pub fn project_settings_dialog_ui(world: &mut World) {

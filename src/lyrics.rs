@@ -201,11 +201,14 @@ pub struct Timestamp {
     pub time: Duration
 }
 
-pub fn lyrics_edit_ui(mut ui: InMut<egui::Ui>, mut editor_state: NonSendMut<EditorState>) {
+pub fn lyrics_edit_ui(mut ui: InMut<egui::Ui>, 
+  mut editor_state: NonSendMut<EditorState>,
+  mut audio_state: NonSendMut<crate::editor::AudioState>
+) {
   let mut text_edit_changed = false;
   let mut cursor_pos = None;
   let mut insert_desired = false;
-  let curr_time = editor_state.playhead_position();
+  let curr_time = audio_state.playhead_position();
   let needs_save_before_exit = editor_state.needs_save_before_exit;
   if let Some(project_data) = &mut editor_state.project_data {
     let mut title_str = format!("{} - {}", project_data.artist, project_data.title);

@@ -94,11 +94,12 @@ fn handle_export_initiated(mut commands: Commands,
 }
 
 fn update_export(mut export_state: ResMut<ExportState>, mut commands: Commands,
-  editor_state: NonSend<EditorState>, tokio_runtime: Res<TokioTasksRuntime>) 
+  editor_state: NonSend<EditorState>, audio_state: NonSend<crate::editor::AudioState>,
+  tokio_runtime: Res<TokioTasksRuntime>) 
 {
   if export_state.is_exporting {
     export_state.frame_idx += 1;
-    if export_state.frame_idx as f64 / 12. > editor_state.duration.unwrap().as_secs_f64() + editor_state.project_data.as_ref().unwrap().song_delay_time.unwrap() as f64 {
+    if export_state.frame_idx as f64 / 12. > audio_state.duration.unwrap().as_secs_f64() + editor_state.project_data.as_ref().unwrap().song_delay_time.unwrap() as f64 {
       if let Some(export_ent) = export_state.export_ent {
         commands.entity(export_ent).despawn();
         export_state.export_ent = None;

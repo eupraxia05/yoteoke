@@ -22,6 +22,7 @@ pub struct EditorPlugin;
 impl Plugin for EditorPlugin {
   fn build(&self, app: &mut App) {
     app.insert_non_send_resource(EditorState::default());
+    app.insert_non_send_resource(AudioState::default());
     app.add_systems(Update, ui);
     app.add_systems(Update, handle_window_close_requested);
     app.insert_resource(ExitConfirmDialog::default());
@@ -36,9 +37,6 @@ pub struct EditorState {
   pub project_file_path: PathBuf,
   pub project_data: Option<crate::project::ProjectData>,
   pub new_file_dialog: Option<NewProjectDialog>,
-  pub music_handle: Option<StreamingSoundHandle<FromFileError>>,
-  pub audio_manager: Option<AudioManager>,
-  pub duration: Option<Duration>,
   pub parsed_lyrics: Option<ParsedLyrics>,
   pub lyrics_dirty: bool,
   pub needs_save_before_exit: bool,
@@ -47,13 +45,20 @@ pub struct EditorState {
   pub is_paused: bool,
 }
 
+#[derive(Default)]
+pub struct AudioState {
+  pub music_handle: Option<StreamingSoundHandle<FromFileError>>,
+  pub audio_manager: Option<AudioManager>,
+  pub duration: Option<Duration>,
+}
+
 #[derive(Default, Resource)]
 pub struct TitlecardState {
   pub titlecard_image: Option<Handle<Image>>,
   pub titlecard_egui_tex_id: Option<egui::TextureId>,
 }
 
-impl EditorState {
+impl AudioState {
     pub fn playhead_position(&self) -> Duration {
       if let Some(music_handle) = &self.music_handle {
         return Duration::from_secs_f64(music_handle.position());
