@@ -24,3 +24,8 @@ minidumper-child = "0.2.2"
 minidump = "0.25.0"
 egui_commonmark = { version = "0.20.0", features = ["macros"] }
 bevy-inspector-egui = "0.30.0"
+winit = "0.30.5"
+egui-toast = "0.17.0"
+
+[build-dependencies]
+winresource = "0.1.20"

@@ -1,3 +1,11 @@
+#![cfg_attr(
+  all(
+    target_os = "windows",
+  ),
+  windows_subsystem = "windows"
+)]
+
+use bevy::log::{tracing_subscriber, BoxedLayer};
 use bevy::prelude::*;
 use bevy::render::RenderPlugin;
 use bevy_egui::EguiPlugin;
@@ -6,6 +14,7 @@ use bevy_inspector_egui::DefaultInspectorConfigPlugin;
 use lyrics::LyricsPlugin;
 use project::ProjectPlugin;
 use bevy_file_dialog::prelude::*;
+use std::env::{set_current_dir, current_exe};
 
 mod lyrics;
 use crate::lyrics::ParsedLyrics;
@@ -38,6 +47,14 @@ use help::HelpPlugin;
 use bevy_tokio_tasks::TokioTasksPlugin;
 
 fn main() {
+  #[cfg(not(debug_assertions))]
+  {
+    println!("Setting cwd...");
+    let mut exe_dir = current_exe().unwrap();
+    exe_dir.pop();
+    set_current_dir(exe_dir).expect("couldn't set cwd!");
+  }
+
   let _guard = crash_handling::run_handler();
 
   let mut app = App::new();
@@ -45,6 +62,7 @@ fn main() {
   let export_plugin = ImageExportPlugin::default();
   let export_threads = export_plugin.threads.clone();
     
+  println!("Configuring plugins...");
   app
     .add_plugins(DefaultPlugins
       .set(RenderPlugin {
@@ -81,6 +99,7 @@ fn main() {
   sub_viewport::build(&mut app);
   export::build(&mut app);
 
+  println!("Running app...");
   app.run();
 
   export_threads.finish();

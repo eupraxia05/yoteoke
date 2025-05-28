@@ -65,7 +65,7 @@ pub fn help_dialog_ui(mut egui_contexts: EguiContexts, mut help_dialog_state: Re
 pub fn about_dialog_ui(mut egui_contexts: EguiContexts, mut about_dialog_state: ResMut<AboutDialogState>) {
   if about_dialog_state.is_open {
     egui::Window::new("About").show(egui_contexts.ctx_mut(), |ui| {
-      ui.heading("YoteOke Lyric Editor");
+      ui.heading("YoteOke Lyric Editor v0.1");
       ui.label("Made by Cassie G. for YoteOke");
       ui.label("Special thanks to the diveBar karaoke community!");
       ui.separator();

@@ -7,7 +7,7 @@ use kira::{
 };
 use kira::AudioManager;
 
-use crate::editor::EditorState;
+use crate::editor::{show_and_log_error, EditorState};
 
 pub struct AudioPlugin;
 
@@ -28,7 +28,8 @@ fn startup(mut editor_state: NonSendMut<EditorState>,
       audio_state.audio_manager = Some(m);
     },
     Err(e) => {
-      error!("Error initializing Kira audio manager: {:?}", e); 
+      show_and_log_error(editor_state.as_mut(), 
+        format!("Error initializing Kira audio manager: {:?}", e));
     }
   }
 }
@@ -38,15 +39,18 @@ fn update(mut editor_state: NonSendMut<EditorState>,
 ) {
   if audio_state.music_handle.is_none() {
     let mut music = None;
-    if let Some(project_data) = &editor_state.project_data {
-      if let Some(song_file) = &project_data.song_file {
-          match StreamingSoundData::from_file(song_file) {
+    if editor_state.project_data.is_some() {
+      if editor_state.project_data.as_ref().unwrap().song_file.is_some() {
+        let song_file = editor_state.project_data.as_ref().unwrap().song_file.as_ref().unwrap().clone();
+          match StreamingSoundData::from_file(song_file.clone()) {
               Ok(data) => {
                   music = Some(data);
               },
               Err(e) => {
-                  error!("Failed to load music file {:?}: {:?}", 
-                      project_data.song_file, e);
+                  show_and_log_error(editor_state.as_mut(), 
+                    format!("Failed to load music file {:?}: {:?}", 
+                      song_file, e)
+                  );
               }
           }
       }
@@ -63,7 +67,8 @@ fn update(mut editor_state: NonSendMut<EditorState>,
               audio_state.music_handle = Some(handle);
           },
           Err(e) => {
-              error!("Failed to play sound: {:?}", e);
+            show_and_log_error(editor_state.as_mut(), 
+              format!("Failed to play sound: {:?}", e));
           }
       }
     }

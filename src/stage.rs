@@ -120,6 +120,7 @@ fn update_preview(editor_state: NonSend<EditorState>,
           TextSpan::new(String::from(&text[chars_sung..]) + "\n"),
           TextFont {
             font_size: 64.0,
+            
             ..Default::default()
           }, 
           TextColor(

@@ -2313,6 +2313,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "egui-toast"
+version = "0.17.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "366a31eb8c905835c85a36baff26d7a003a9fd6631a04b1f15f42d9cb20d11ad"
+dependencies = [
+ "egui",
+]
+
+[[package]]
 name = "egui_commonmark"
 version = "0.20.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6968,6 +6977,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "winresource"
+version = "0.1.20"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ba4a67c78ee5782c0c1cb41bebc7e12c6e79644daa1650ebbc1de5d5b08593f7"
+dependencies = [
+ "toml",
+ "version_check",
+]
+
+[[package]]
 name = "wit-bindgen-rt"
 version = "0.39.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7103,6 +7122,7 @@ dependencies = [
  "bevy_image_export",
  "crash-handler",
  "directories",
+ "egui-toast",
  "egui_commonmark",
  "ffmpeg-cli",
  "image",
@@ -7115,6 +7135,8 @@ dependencies = [
  "sadness-generator",
  "serde",
  "serde_json",
+ "winit",
+ "winresource",
 ]
 
 [[package]]

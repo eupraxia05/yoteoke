@@ -16,8 +16,9 @@ use bevy::render::render_resource::{AsBindGroupShaderType, Extent3d, TextureDime
 use bevy_egui::egui::load::SizedTexture;
 use bevy_file_dialog::prelude::*;
 use bevy::ecs::world::CommandQueue;
+use kira::Tween;
 
-use crate::editor::EditorState;
+use crate::editor::{AudioState, EditorState, show_and_log_error, show_and_log_info};
 use crate::stage::TitlecardUpdatedEvent;
 
 pub struct ProjectPlugin;
@@ -31,6 +32,7 @@ impl Plugin for ProjectPlugin {
     app.add_systems(Update, handle_save_project_requested_event);
     app.add_systems(Update, handle_open_project_dialog);
     app.add_systems(Update, handle_thumbnail_file_path_dialog);
+    app.add_systems(Update, handle_song_file_path_dialog);
     app.add_event::<NewProjectRequestedEvent>();
     app.add_event::<NewProjectDialogSubmittedEvent>();
     app.add_event::<SaveProjectRequestedEvent>();
@@ -39,6 +41,8 @@ impl Plugin for ProjectPlugin {
     app.register_type::<TitlecardPath>();
     app.register_type_data::<TitlecardPath, InspectorEguiImpl>();
     app.insert_resource(ProjectSettingsDialog::default());
+    app.register_type::<SongFilePath>();
+    app.register_type_data::<SongFilePath, InspectorEguiImpl>();
   }
 }
 
@@ -104,7 +108,7 @@ impl NewProjectDialog {
             ui.label("No file selected");
           }
           if ui.button("Browse...").clicked() {
-            commands.dialog().pick_file_path::<NewProjectSongFileDialog>();
+            commands.dialog().add_filter("Audio file", &["mp3", "wav", "ogg", "flac"]).pick_file_path::<NewProjectSongFileDialog>();
           }
         });
 
@@ -149,7 +153,7 @@ fn handle_new_project_dialog_submitted_events(
       editor_state.new_file_dialog = None;
     
       let serialized = serde_json::to_vec_pretty(editor_state.project_data.as_ref().unwrap()).unwrap();
-      commands.dialog().save_file::<NewProjectSaveFileDialog>(serialized);
+      commands.dialog().add_filter("YoteOke Lyric Editor Project", &["yoke"]).save_file::<NewProjectSaveFileDialog>(serialized);
     }
   }
 }
@@ -176,15 +180,18 @@ fn handle_save_project_requested_event(mut events: EventReader<SaveProjectReques
         vec = serde_json::to_vec_pretty(&project_data).unwrap();
     }
 
-    match File::create(editor_state.project_file_path.clone())
+    let project_file_path = editor_state.project_file_path.clone();
+    match File::create(project_file_path.clone())
       .unwrap()
       .write_all(&vec[..])
     {
       Err(e) => {
-        error!("Error saving to {:?}: {:?}", editor_state.project_file_path, e);
+        show_and_log_error(editor_state.as_mut(), 
+          format!("Error saving to {:?}: {:?}", project_file_path.clone(), e));
       },
       Ok(_) => {
-        println!("Project saved to {:?}", editor_state.project_file_path);
+        show_and_log_info(editor_state.as_mut(), 
+          format!("Project saved to {:?}", project_file_path));
         editor_state.needs_save_before_exit = false;
         project_saved_events.send_default();
       }
@@ -241,6 +248,7 @@ pub fn configure_file_dialog_plugin(plugin: FileDialogPlugin) -> FileDialogPlugi
   .with_save_file::<crate::project::NewProjectSaveFileDialog>()
   .with_load_file::<crate::project::OpenProjectDialog>()
   .with_save_file::<crate::project::SaveAsDialog>()
+  .with_pick_file::<SongFilePathDialog>()
 }
 
 fn handle_open_project_dialog(
@@ -271,8 +279,8 @@ fn handle_open_project_dialog(
         println!("couldn't deserialize file");
     }
 
-    if let Some(titlecard_path) = &editor_state.project_data.as_ref().unwrap().thumbnail_path {
-      let load_result = load_titlecard_image(&titlecard_path, images.as_mut(), egui_user_textures.as_mut());
+    if let Some(titlecard_path) = editor_state.project_data.as_ref().unwrap().thumbnail_path.clone() {
+      let load_result = load_titlecard_image(&titlecard_path, images.as_mut(), egui_user_textures.as_mut(), editor_state.as_mut());
       let Some((image_handle, egui_texture_id)) = load_result else {
         return;
       };
@@ -289,18 +297,20 @@ fn handle_open_project_dialog(
 }
 
 fn load_titlecard_image(titlecard_path: &PathBuf, images: &mut Assets<Image>,
-  egui_user_textures: &mut EguiUserTextures) 
+  egui_user_textures: &mut EguiUserTextures, editor_state: &mut EditorState) 
   -> Option<(Handle<Image>, egui::TextureId)>
 {
   let reader_result = ImageReader::open(titlecard_path.clone());
   let Ok(reader) = reader_result else {
-    error!("error reading titlecard image: {:?}", reader_result.err().unwrap());
+    show_and_log_error(editor_state, 
+      format!("Error reading titlecard image: {:?}", reader_result.err().unwrap()));
     return None;
   };
 
   let decode_result = reader.decode();
   let Ok(decode) = decode_result else {
-    error!("error decoding titlecard image: {:?}", decode_result.err().unwrap());
+    show_and_log_error(editor_state, 
+      format!("Error decoding titlecard image: {:?}", decode_result.err().unwrap()));
     return None;
   };
 
@@ -330,7 +340,7 @@ fn handle_thumbnail_file_path_dialog(
   mut titlecard_state: ResMut<crate::editor::TitlecardState>
 ) {
   for ev in events.read() {
-    let load_result = load_titlecard_image(&ev.path, images.as_mut(), egui_user_textures.as_mut());
+    let load_result = load_titlecard_image(&ev.path, images.as_mut(), egui_user_textures.as_mut(), editor_state.as_mut());
     let Some((image_handle, egui_texture_id)) = load_result else {
       return;
     };
@@ -354,7 +364,7 @@ pub fn file_ops_menu_ui(mut ui: InMut<egui::Ui>,
     new_project_event_writer.send_default();
   }
   if ui.button("Open...").clicked() {
-    commands.dialog().load_file::<crate::project::OpenProjectDialog>();
+    commands.dialog().add_filter("YoteOke Lyric Editor Project", &["yoke"]).load_file::<crate::project::OpenProjectDialog>();
   }
   if ui.button("Save").clicked() {
     save_requested_event_writer.send_default();
@@ -362,7 +372,7 @@ pub fn file_ops_menu_ui(mut ui: InMut<egui::Ui>,
   if ui.button("Save As...").clicked() {
     if let Some(project_data) = editor_state.project_data.as_ref() {
       let serialized = serde_json::to_vec_pretty(project_data).unwrap();
-      commands.dialog().save_file::<crate::project::SaveAsDialog>(serialized);
+      commands.dialog().add_filter("YoteOke Lyric Editor Project", &["yoke"]).save_file::<crate::project::SaveAsDialog>(serialized);
     }
   }
 }
@@ -375,7 +385,7 @@ pub fn project_menu_ui(mut ui: InMut<egui::Ui>,
     project_settings_dialog.open();
   }
   if ui.button("Export...").clicked() {
-    commands.dialog().save_file::<crate::export::ExportFilePathDialog>(Vec::new());
+    commands.dialog().add_filter("Video file", &["mp4"]).save_file::<crate::export::ExportFilePathDialog>(Vec::new());
   }
 }
 
@@ -433,7 +443,8 @@ struct ProjectSettingsProperties {
   pub sung_color: Color,
   pub titlecard_show_time: f32,
   pub song_delay_time: f32,
-  pub titlecard_path: TitlecardPath
+  pub titlecard_path: TitlecardPath,
+  pub song_path: SongFilePath
 }
 
 impl ProjectSettingsProperties {
@@ -444,7 +455,8 @@ impl ProjectSettingsProperties {
       sung_color: project_data.sung_color.unwrap_or(Color::default()),
       titlecard_show_time: project_data.titlecard_show_time.unwrap_or_default(),
       song_delay_time: project_data.song_delay_time.unwrap_or_default(),
-      titlecard_path: TitlecardPath(project_data.thumbnail_path.clone())
+      titlecard_path: TitlecardPath(project_data.thumbnail_path.clone()),
+      song_path: SongFilePath(project_data.song_file.clone())
     }
   }
 
@@ -473,7 +485,7 @@ impl InspectorPrimitive for TitlecardPath {
 
     if ui.button("Set").clicked() {
       env.context.queue.as_mut().unwrap().push(|world: &mut World| {
-        world.commands().dialog().pick_file_path::<TitlecardFilePathDialog>();
+        world.commands().dialog().add_filter("Image file", &["png", "jpeg", "jpg", "bmp", "tga", "tiff", "webp"]).pick_file_path::<TitlecardFilePathDialog>();
       });
     }
     false
@@ -491,6 +503,53 @@ impl InspectorPrimitive for TitlecardPath {
       .unwrap().titlecard_egui_tex_id;
     if let Some(tex_id) = tex_id {
       ui.image(egui::ImageSource::Texture(SizedTexture::new(tex_id, [128., 72.])));
+    }
+  }
+}
+
+#[derive(Reflect, Clone)]
+struct SongFilePath(Option<PathBuf>);
+
+impl InspectorPrimitive for SongFilePath {
+  fn ui(&mut self, ui: &mut egui::Ui, options: &dyn std::any::Any, id: egui::Id,
+    mut env: InspectorUi<'_, '_>) -> bool 
+  {
+    self.ui_readonly(ui, options, id, env.reborrow());
+
+    if ui.button("Set").clicked() {
+      env.context.queue.as_mut().unwrap().push(|world: &mut World| {
+        world.commands().dialog().add_filter("Audio file", &["mp3", "wav", "ogg", "flac"]).pick_file_path::<SongFilePathDialog>();
+      });
+    }
+
+    false
+  }
+
+  fn ui_readonly(&self, ui: &mut egui::Ui, options: &dyn std::any::Any,
+    id: egui::Id, env: InspectorUi<'_, '_>) 
+  {
+    if self.0.is_some() {
+      ui.label(self.0.as_ref().unwrap().as_os_str().to_string_lossy());
+    } else {
+      ui.label("None");
+    }
+  }
+}
+
+struct SongFilePathDialog;
+
+fn handle_song_file_path_dialog(
+  mut events: EventReader<DialogFilePicked<SongFilePathDialog>>,
+  mut audio_state: NonSendMut<AudioState>,
+  mut editor_state: NonSendMut<EditorState>
+) {
+  for ev in events.read() {
+    if let Some(project_data) = &mut editor_state.project_data {
+      project_data.song_file = Some(ev.path.clone());
+      if let Some(music_handle) = &mut audio_state.music_handle {
+        music_handle.pause(Tween::default());
+      }
+      audio_state.music_handle = None;
     }
   }
 }

@@ -1,4 +1,8 @@
 use bevy::prelude::*;
+use bevy_egui::egui::Align2;
+use bevy_egui::egui::Direction;
+use bevy_egui::egui::Pos2;
+use egui_toast::Toast;
 use std::path::PathBuf;
 use std::time::Duration;
 use kira::sound::streaming::StreamingSoundHandle;
@@ -8,6 +12,10 @@ use bevy_egui::egui;
 use bevy::ecs::system::SystemState;
 use bevy_egui::EguiContexts;
 use bevy::window::WindowCloseRequested;
+use kira::Decibels;
+use bevy::winit::WinitWindows;
+use winit::window::Icon;
+use egui_toast::Toasts;
 
 use crate::export::ExportInitiatedEvent;
 use crate::project::ProjectSavedEvent;
@@ -29,6 +37,8 @@ impl Plugin for EditorPlugin {
     app.add_systems(Update, exit_confirm_dialog_ui);
     app.add_systems(Update, finish_save_and_exit);
     app.insert_resource(TitlecardState::default());
+    app.add_systems(Startup, set_window_icon);
+    app.add_systems(Startup, setup_toasts);
   }
 }
 
@@ -43,6 +53,7 @@ pub struct EditorState {
   pub is_in_pre_delay: bool,
   pub curr_pre_delay_time: f64,
   pub is_paused: bool,
+  pub toasts: Toasts,
 }
 
 #[derive(Default)]
@@ -50,6 +61,7 @@ pub struct AudioState {
   pub music_handle: Option<StreamingSoundHandle<FromFileError>>,
   pub audio_manager: Option<AudioManager>,
   pub duration: Option<Duration>,
+  pub volume: Decibels,
 }
 
 #[derive(Default, Resource)]
@@ -107,6 +119,12 @@ fn ui(world: &mut World) {
   world.run_system_cached(crate::help::help_dialog_ui).expect("Couldn't run help_dialog_ui system!");
   world.run_system_cached(crate::help::about_dialog_ui).expect("Couldn't run about_dialog_ui system!");
   world.run_system_cached(crate::project::project_settings_dialog_ui).expect("Couldn't run project_settings_dialog_ui system!");
+
+  world.run_system_cached(toasts_ui).expect("Couldn't run toasts_ui!");
+}
+
+fn toasts_ui(mut editor_state: NonSendMut<EditorState>, mut egui_contexts: EguiContexts) {
+  editor_state.toasts.show(egui_contexts.ctx_mut());
 }
 
 fn menu_ui(ui: InMut<egui::Ui>, world: &mut World) 
@@ -212,4 +230,47 @@ fn finish_save_and_exit(exit_confirm_dialog: Res<ExitConfirmDialog>,
       exit_events.send(AppExit::Success);
     }
   }
+}
+
+fn set_window_icon(
+    // we have to use `NonSend` here
+    windows: NonSend<WinitWindows>,
+) {
+    // here we use the `image` crate to load our icon data from a png file
+    // this is not a very bevy-native solution, but it will do
+    let (icon_rgba, icon_width, icon_height) = {
+        let image = image::open("icon.png")
+            .expect("Failed to open icon path")
+            .into_rgba8();
+        let (width, height) = image.dimensions();
+        let rgba = image.into_raw();
+        (rgba, width, height)
+    };
+    let icon = Icon::from_rgba(icon_rgba, icon_width, icon_height).unwrap();
+
+    // do it for all windows
+    for window in windows.windows.values() {
+        window.set_window_icon(Some(icon.clone()));
+    }
+}
+
+pub fn show_and_log_error(editor_state: &mut EditorState, err: String) {
+  error!(err);
+  editor_state.toasts.add(Toast::new().kind(egui_toast::ToastKind::Error).text(err));
+}
+
+pub fn show_and_log_warning(editor_state: &mut EditorState, err: String) {
+  warn!(err);
+  editor_state.toasts.add(Toast::new().kind(egui_toast::ToastKind::Warning).text(err));
+}
+
+pub fn show_and_log_info(editor_state: &mut EditorState, err: String) {
+  info!(err);
+  editor_state.toasts.add(Toast::new().kind(egui_toast::ToastKind::Info).text(err));
+}
+
+fn setup_toasts(mut editor_state: NonSendMut<EditorState>, mut egui_contexts: EguiContexts) {
+  editor_state.toasts = Toasts::new()
+    .anchor(Align2::RIGHT_BOTTOM, [-10., -10.])
+    .direction(Direction::BottomUp);
 }

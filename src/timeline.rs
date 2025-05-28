@@ -20,12 +20,12 @@ impl Plugin for TimelinePlugin {
 pub fn timeline_ui(mut ui: InMut<egui::Ui>, mut editor_state: NonSendMut<EditorState>,
   mut audio_state: NonSendMut<crate::editor::AudioState>
 ) {
-  egui::TopBottomPanel::new(egui::panel::TopBottomSide::Top, "timeline_header").exact_height(32.).show_inside(&mut ui, |ui| {
+  egui::TopBottomPanel::new(egui::panel::TopBottomSide::Top, "timeline_header").exact_height(48.).show_inside(&mut ui, |ui| {
     timeline_header_ui(ui, editor_state.reborrow(), audio_state.reborrow());
   });
 
   egui::CentralPanel::default().show_inside(&mut ui, |ui| {
-    timeline_blocks_ui(ui, editor_state.reborrow());
+    /*timeline_blocks_ui(ui, editor_state.reborrow());*/
   });
 }
 
@@ -114,6 +114,11 @@ pub fn timeline_header_ui(ui: &mut egui::Ui,
   let total_time_str = format!("{:0>2}:{:0>2}.{:0>3}", total_time.as_secs() / 60, total_time.as_secs() % 60, total_time.subsec_millis());
   egui::SidePanel::new(egui::panel::Side::Right, "timecode").show_inside(ui, |ui| {
     ui.label(format!("{} / {}", curr_time_str, total_time_str));
+    let volume_response = ui.add(egui::Slider::new(&mut audio_state.volume.0, RangeInclusive::new(-60., 0.)));
+    if volume_response.changed() {
+      let volume = audio_state.volume;
+      audio_state.music_handle.as_mut().unwrap().set_volume(volume, Tween::default());
+    }
   });
   egui::CentralPanel::default().show_inside(ui, |ui| {
     ui.style_mut().spacing.slider_width = ui.available_width();
@@ -128,19 +133,15 @@ pub fn timeline_header_ui(ui: &mut egui::Ui,
 fn timeline_blocks_ui(ui: &mut egui::Ui, mut editor_state: Mut<EditorState>,) {
   egui::ScrollArea::both().auto_shrink([false, false]).show(ui, |ui| {
     if let Some(parsed_lyrics) = &mut editor_state.parsed_lyrics {
-      ui.horizontal(|ui| {
-        for block in &parsed_lyrics.blocks {
-          egui::Frame::canvas(ui.style()).show(ui, |ui| {
-            ui.vertical(|ui| {
-              let lyrics = block.lyrics.clone().replace("\n", " ");
-              let label = egui::Label::new(lyrics.clone())
-                .wrap_mode(egui::TextWrapMode::Extend)
-                .halign(egui::Align::Min);
-              ui.add(label);
-            });
-          });
-        }
-      });
+      for block in &parsed_lyrics.blocks {
+        egui::Frame::canvas(ui.style()).show(ui, |ui| {
+          let lyrics = block.lyrics.clone().replace("\n", " ");
+          let label = egui::Label::new(lyrics.clone())
+            .wrap_mode(egui::TextWrapMode::Extend)
+            .halign(egui::Align::Min);
+          ui.add(label);
+        });
+      }
     }
   });
 }

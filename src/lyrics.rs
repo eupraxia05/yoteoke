@@ -6,6 +6,7 @@ use bevy::prelude::*;
 use bevy_egui::egui;
 
 use crate::editor::EditorState;
+use crate::editor::show_and_log_error;
 
 pub struct LyricsPlugin;
 
@@ -17,14 +18,14 @@ impl Plugin for LyricsPlugin {
 
 fn update(mut editor_state: NonSendMut<EditorState>) {
   if editor_state.lyrics_dirty {
-    info!("updating lyrics");
     editor_state.parsed_lyrics = None;
     match ParsedLyrics::parse(&editor_state.project_data.as_ref().unwrap().lyrics) {
       Ok(lyrics) => {
         editor_state.parsed_lyrics = Some(lyrics);
       },
       Err(err) => {
-        error!("Error parsing lyrics: {:?}", err);
+        show_and_log_error(editor_state.as_mut(), 
+          format!("Error parsing lyrics: {:?}", err));
       }
     }
     editor_state.lyrics_dirty = false;
@@ -68,6 +69,11 @@ impl ParsedLyrics {
                     curr_block = Block::default();
                 }
             }
+        }
+
+        // push the last block at eof if it's not empty
+        if curr_block.lyrics.len() > 0 {
+            blocks.push(curr_block.clone());
         }
         
         Ok(ParsedLyrics {
